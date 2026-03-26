@@ -1,0 +1,118 @@
+<mvc:View controllerName="flavournamespace.flavourmodule.controller.Main"
+    xmlns:mvc="sap.ui.core.mvc"
+    xmlns="sap.m"
+    xmlns:f="sap.f"
+    xmlns:fb="sap.ui.comp.filterbar"
+    xmlns:table="sap.ui.table"
+    xmlns:core="sap.ui.core"
+    class="sapUiSizeCompact"> 
+    
+    <f:DynamicPage 
+        id="dynamicPageId" 
+        headerExpanded="true" 
+        preserveHeaderStateOnScroll="true" 
+        toggleHeaderOnTitleClick="false" 
+        fitContent="true">
+        
+        <f:title>
+            <f:DynamicPageTitle>
+                <f:heading>
+                    <Title text="Flavor Planning" level="H1"/>
+                </f:heading>
+                <f:navigationActions>
+                    <Button 
+                        icon="sap-icon://lightbulb" 
+                        type="Transparent" 
+                        tooltip="Toggle Dark/Light Mode" 
+                        press=".onToggleTheme"/>
+                </f:navigationActions>
+                
+                <f:expandedContent>
+                    <fb:FilterBar id="filterbar" reset="onReset" search="onSearch" useToolbar="false" showGoOnFB="true">
+                        <fb:filterGroupItems>
+                            
+                            <fb:FilterGroupItem groupName="G1" name="Material" label="Material" visibleInFilterBar="true" mandatory="true">
+                                <fb:control>
+                                    <MultiInput id="inpMaterial" placeholder="Select Material(s)..." showValueHelp="true" valueHelpRequest=".onMaterialVH"/>
+                                </fb:control>
+                            </fb:FilterGroupItem>
+
+                            <fb:FilterGroupItem groupName="G1" name="Plant" label="Plant" visibleInFilterBar="true" mandatory="true">
+                                <fb:control>
+                                    <MultiInput id="inpPlant" placeholder="Enter Plant(s)..." showValueHelp="true" valueHelpRequest=".onPlantVH"/>
+                                </fb:control>
+                            </fb:FilterGroupItem>
+                            
+                            <fb:FilterGroupItem groupName="G1" name="Vendor" label="Vendor" visibleInFilterBar="true">
+                                <fb:control>
+                                    <MultiInput id="inpVendor" placeholder="Enter Vendor(s)..." showValueHelp="true" valueHelpRequest=".onVendorVH"/>
+                                </fb:control>
+                            </fb:FilterGroupItem>
+
+                            <fb:FilterGroupItem groupName="G1" name="Horizon" label="Planning Horizon" visibleInFilterBar="true" mandatory="true">
+                                <fb:control>
+                                    <DateRangeSelection 
+                                        id="inpDateRange" 
+                                        displayFormat="MMM dd, yyyy" 
+                                        placeholder="Select Date Range"/>
+                                </fb:control>
+                            </fb:FilterGroupItem>
+
+                            <fb:FilterGroupItem groupName="G1" name="Period" label="Period" visibleInFilterBar="true" mandatory="true">
+                                <fb:control>
+                                    <Select id="inpPeriod" selectedKey="W">
+                                        <core:Item key="W" text="Weekly" />
+                                        <core:Item key="M" text="Monthly" />
+                                        <core:Item key="Q" text="Quarterly" />
+                                    </Select>
+                                </fb:control>
+                            </fb:FilterGroupItem>
+
+                        </fb:filterGroupItems>
+                    </fb:FilterBar>
+                </f:expandedContent>
+            </f:DynamicPageTitle>
+        </f:title>
+
+        <f:content>
+            <table:TreeTable
+                id="idMrpTreeTable" selectionMode="None"
+                enableColumnReordering="false"
+                rowMode="Auto"
+                alternateRowColors="true" 
+                fixedColumnCount="4"> 
+                
+                <table:extension>
+                    <OverflowToolbar style="Clear">
+                        <ToolbarSpacer/>
+                        <Button text="Save Changes" type="Emphasized" press=".onSave" icon="sap-icon://save"/>
+                        <Button text="Refresh" press=".onRefresh" icon="sap-icon://refresh" type="Transparent"/>
+                    </OverflowToolbar>
+                </table:extension>
+
+                <table:columns>
+                    <table:Column width="120px">
+                        <Label text="Category" design="Bold"/>
+                        <table:template><Text text="{Category}" wrapping="false"/></table:template>
+                    </table:Column>
+                    
+                    <table:Column width="175px">
+                        <Label text="MRP Element" design="Bold"/>
+                        <table:template><Text text="{MRPElement}" wrapping="false"/></table:template>
+                    </table:Column>
+
+                    <table:Column width="52px">
+                        <Label text="Plant" design="Bold"/>
+                        <table:template><Text text="{Plant}" wrapping="false"/></table:template>
+                    </table:Column>
+                    
+                    <table:Column width="280px">
+                        <Label text="Prod Version" design="Bold"/>
+                        <table:template><Text text="{ProdVersion}" wrapping="false"/></table:template>
+                    </table:Column>
+                </table:columns>
+            </table:TreeTable>
+        </f:content>
+        
+    </f:DynamicPage>
+</mvc:View>
