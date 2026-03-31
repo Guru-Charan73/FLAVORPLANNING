@@ -76,21 +76,13 @@ sap.ui.define([
 
         _loadVariants() {
             const oVM = this.byId("idVariantManagement");
-            if (!oVM) return;
-
-            oVM.removeAllItems();
-            oVM.addItem(new CoreItem({ key: "*standard*", text: "Standard" }));
-
             const sData = localStorage.getItem("flavorVariants");
+            
             if (sData) {
-                try {
-                    this._aCustomVariants = JSON.parse(sData);
-                    this._aCustomVariants.forEach(v => {
-                        oVM.addItem(new CoreItem({ key: v.key, text: v.name }));
-                    });
-                } catch(e) {
-                    this._aCustomVariants = [];
-                }
+                this._aCustomVariants = JSON.parse(sData);
+                this._aCustomVariants.forEach(v => {
+                    oVM.addItem(new CoreItem({ key: v.key, text: v.name }));
+                });
             } else {
                 this._aCustomVariants = [];
             }
@@ -100,9 +92,6 @@ sap.ui.define([
                 oVM.setDefaultVariantKey(sDef);
                 oVM.setInitialSelectionKey(sDef);
                 setTimeout(() => this._applyVariant(sDef), 300);
-            } else {
-                oVM.setDefaultVariantKey("*standard*");
-                oVM.setInitialSelectionKey("*standard*");
             }
         },
 
@@ -112,21 +101,18 @@ sap.ui.define([
             const bDefault = oEvent.getParameter("def");
             let sKey = oEvent.getParameter("key");
 
-            const fnGetTokens = (id) => {
-                const oInp = this.byId(id);
-                return oInp ? oInp.getTokens().map(t => ({ key: t.getKey(), text: t.getText(), range: t.data("range") })) : [];
-            };
+            const fnGetTokens = (id) => this.byId(id).getTokens().map(t => ({ key: t.getKey(), text: t.getText(), range: t.data("range") }));
 
             const oState = {
                 material: fnGetTokens("inpMaterial"),
                 plant: fnGetTokens("inpPlant"),
                 vendor: fnGetTokens("inpVendor"),
-                dateStart: this.byId("inpDateRange") ? this.byId("inpDateRange").getDateValue() : null,
-                dateEnd: this.byId("inpDateRange") ? this.byId("inpDateRange").getSecondDateValue() : null,
-                period: this.byId("inpPeriod") ? this.byId("inpPeriod").getSelectedKey() : "W"
+                dateStart: this.byId("inpDateRange").getDateValue(),
+                dateEnd: this.byId("inpDateRange").getSecondDateValue(),
+                period: this.byId("inpPeriod").getSelectedKey()
             };
 
-            if (bOverwrite && sKey !== "*standard*") {
+            if (bOverwrite) {
                 const oVar = this._aCustomVariants.find(v => v.key === sKey);
                 if (oVar) oVar.state = oState;
             } else {
@@ -138,8 +124,6 @@ sap.ui.define([
             if (bDefault) {
                 this.byId("idVariantManagement").setDefaultVariantKey(sKey);
                 localStorage.setItem("flavorDefVariant", sKey);
-            } else if (localStorage.getItem("flavorDefVariant") === sKey) {
-                localStorage.removeItem("flavorDefVariant");
             }
 
             localStorage.setItem("flavorVariants", JSON.stringify(this._aCustomVariants));
@@ -165,7 +149,6 @@ sap.ui.define([
             if (oVariant) {
                 const fnSetTokens = (id, aToks) => {
                     const oInp = this.byId(id);
-                    if (!oInp) return;
                     oInp.removeAllTokens();
                     if (aToks) {
                         aToks.forEach(t => {
@@ -183,7 +166,7 @@ sap.ui.define([
                 if (oVariant.state.dateStart) this.byId("inpDateRange").setDateValue(new Date(oVariant.state.dateStart));
                 if (oVariant.state.dateEnd) this.byId("inpDateRange").setSecondDateValue(new Date(oVariant.state.dateEnd));
                 
-                if (this.byId("inpPeriod")) this.byId("inpPeriod").setSelectedKey(oVariant.state.period || "W");
+                this.byId("inpPeriod").setSelectedKey(oVariant.state.period || "W");
                 
                 this.onSearch();
             }
@@ -221,7 +204,7 @@ sap.ui.define([
 
             return [
                 {
-                    Category: "DEMAND", MRPElement: "Total Demand", BackendCategory: "1", BackendMRPElement: "XX", ...oEmptyWeeks,
+                    Category: "DEMAND", MRPElement: " ", BackendCategory: "1", BackendMRPElement: "XX", ...oEmptyWeeks,design: 'Bold',
                     nodes: [
                         { Category: "", MRPElement: "Independent Demand", BackendCategory: "1", BackendMRPElement: "IndReq", ...oEmptyWeeks, nodes: [] },
                         { Category: "", MRPElement: "SalesOrders", BackendCategory: "1", BackendMRPElement: "SalesOrders", ...oEmptyWeeks, nodes: [] },
@@ -229,7 +212,7 @@ sap.ui.define([
                     ]
                 },
                 {
-                    Category: "SUPPLY", MRPElement: "Total Supply", BackendCategory: "2", BackendMRPElement: "XX", ...oEmptyWeeks,
+                    Category: "SUPPLY", MRPElement: " ", BackendCategory: "2", BackendMRPElement: "XX", ...oEmptyWeeks,
                     nodes: [
                         { Category: "", MRPElement: "PurReq", BackendCategory: "2", BackendMRPElement: "PurRqs", ...oEmptyWeeks, nodes: [] },
                         { Category: "", MRPElement: "PurOrd", BackendCategory: "2", BackendMRPElement: "PurOrd", ...oEmptyWeeks, nodes: [] }
@@ -245,39 +228,6 @@ sap.ui.define([
         _mapODataToSkeleton(aFlatData) {
             const aTree = this._getEmptySkeleton();
 
-            const aUniqueCombos = [];
-            aFlatData.forEach(r => {
-                const sMat = (r.Material || "").trim();
-                const sPlnt = (r.Plant || "").trim();
-                const sVer = (r.ProdVersion || "").trim();
-                if (sMat && sPlnt) {
-                    const bExists = aUniqueCombos.some(c => c.mat === sMat && c.plnt === sPlnt && c.ver === sVer);
-                    if (!bExists) aUniqueCombos.push({ mat: sMat, plnt: sPlnt, ver: sVer });
-                }
-            });
-
-            aTree.forEach(oTop => {
-                if (oTop.Category === "SUPPLY" && oTop.nodes) {
-                    oTop.nodes.forEach(oMid => {
-                        if (oMid.BackendMRPElement === "PurRqs" || oMid.BackendMRPElement === "PurOrd") {
-                            if (!oMid.nodes) oMid.nodes = [];
-                            aUniqueCombos.forEach(combo => {
-                                let oLeaf = {
-                                    Category: "", MRPElement: "", 
-                                    ProdVersion: combo.ver, 
-                                    Material: combo.mat,
-                                    Plant: combo.plnt, 
-                                    BackendCategory: oMid.BackendCategory, 
-                                    BackendMRPElement: oMid.BackendMRPElement
-                                };
-                                for (let i = 1; i <= 54; i++) { oLeaf["W" + i] = 0; }
-                                oMid.nodes.push(oLeaf);
-                            });
-                        }
-                    });
-                }
-            });
-
             aFlatData.forEach(oRow => {
                 let sCat = "";
                 if (oRow.Category) {
@@ -287,7 +237,6 @@ sap.ui.define([
                 const sMrp = (oRow.MRPElement || "").trim();
                 const sPlant = (oRow.Plant || "").trim(); 
                 const sVer = (oRow.ProdVersion || "").trim(); 
-                const sMat = (oRow.Material || "").trim();
 
                 aTree.forEach(oParent => {
                     if (oParent.nodes) {
@@ -297,7 +246,7 @@ sap.ui.define([
                                 
                                 if (!oChild.nodes) oChild.nodes = [];
 
-                                let oLeaf = oChild.nodes.find(leaf => leaf.Plant === sPlant && leaf.ProdVersion === sVer && leaf.Material === sMat);
+                                let oLeaf = oChild.nodes.find(leaf => leaf.Plant === sPlant && leaf.ProdVersion === sVer);
 
                                 if (oLeaf) {
                                     for (let i = 1; i <= 54; i++) {
@@ -308,7 +257,7 @@ sap.ui.define([
                                     oLeaf = {
                                         Category: "", MRPElement: "", 
                                         ProdVersion: sVer, 
-                                        Material: sMat,
+                                        Material: oRow.Material,
                                         Plant: sPlant, 
                                         BackendCategory: sCat, 
                                         BackendMRPElement: sMrp
@@ -419,19 +368,6 @@ sap.ui.define([
                 filters: aFilters,
                 success: oData => {
                     this.getView().setBusy(false);
-                    
-                    // =========================================================
-                    // THE FIX: Check if the backend returned zero records!
-                    // =========================================================
-                    if (!oData.results || oData.results.length === 0) {
-                        this.getView().getModel("localModel").setProperty("/RawData", []);
-                        const aEmpty = this._getEmptySkeleton();
-                        this.getView().getModel().setProperty("/mrpData", aEmpty);
-                        this._oBackupModel.setProperty("/mrpData", JSON.parse(JSON.stringify(aEmpty)));
-                        MessageBox.information("No data found for this selection criteria.");
-                        return; // Stop right here, don't build the table or say success!
-                    }
-
                     this.getView().getModel("localModel").setProperty("/RawData", oData.results);
                     const aResult = this._mapODataToSkeleton(oData.results);
                     this.getView().getModel().setProperty("/mrpData", aResult);
@@ -516,15 +452,24 @@ sap.ui.define([
 
             aBuckets.forEach(oBuck => {
                 
+                // 1. The Input Box (Hidden ONLY for Inventory, Demand Totals, and Supply Totals)
                 const oInp = new Input({
                     value: { path: oBuck.key, type: oInputDecimalType }, 
                     textAlign: "End",
-                    visible: { path: 'Category', formatter: c => c !== 'INVENTORY' },
+                    visible: { 
+                        parts: ['Category'], 
+                        formatter: (category) => {
+                            if (category === "INVENTORY" || category === "DEMAND" || category === "SUPPLY") {
+                                return false; 
+                            }
+                            return true;
+                        } 
+                    },
                     editable: { 
-                        parts: ['nodes', 'BackendCategory', 'Material'], 
-                        formatter: (nodes, category, material) => {
-                            if (category === "1") return false; 
-                            if (!material) return false; 
+                        parts: ['nodes', 'BackendCategory'], 
+                        formatter: (nodes, category) => {
+                            if (nodes && nodes.length > 0) return false;
+                            if (category === "1") return false;
                             return true;
                         } 
                     },
@@ -534,6 +479,20 @@ sap.ui.define([
 
                 oInp.addEventDelegate({ ondblclick: (e) => this.onCellDoubleClick(e.srcControl) });
 
+                // 2. THE BOLD TOTALS (Visible ONLY for Demand and Supply top rows)
+                const oBoldTotals = new ObjectNumber({
+                    number: { path: oBuck.key, type: oDisplayDecimalType }, 
+                    emphasized: true, // <--- THIS MAKES THE NUMBERS BOLD
+                    textAlign: "End",
+                    visible: { 
+                        parts: ['Category'], 
+                        formatter: (category) => {
+                            return (category === "DEMAND" || category === "SUPPLY");
+                        } 
+                    }
+                });
+
+                // 3. The Inventory Text
                 const oInventoryText = new ObjectNumber({
                     number: { path: oBuck.key, type: oDisplayDecimalType }, 
                     emphasized: true, textAlign: "End",
@@ -548,6 +507,7 @@ sap.ui.define([
                     hAlign: "End",
                     template: new HBox({ justifyContent: "End", items: [
                         oInp,
+                        oBoldTotals, // <--- Injected here
                         oInventoryText
                     ]})
                 }));
@@ -571,6 +531,9 @@ sap.ui.define([
                 if (oBucketDef) oEndDate = oBucketDef.endDate;
             }
 
+            // =========================================================
+            // THE FIX: Dynamically pull Material and Plant from FilterBar if Row is Empty
+            // =========================================================
             let sMat = oRow.Material;
             if (!sMat) {
                 const aMatTokens = this.byId("inpMaterial").getTokens();
@@ -604,9 +567,10 @@ sap.ui.define([
             };
 
             if (aMatches.length === 0) {
+                // For completely empty buckets being newly created
                 fnPushToLog({ 
-                    Material: sMat, 
-                    Plant: sPlnt, 
+                    Material: sMat,                 // Extracted fallback 
+                    Plant: sPlnt,                   // Extracted fallback
                     Category: oRow.BackendCategory || "2", 
                     MRPElement: oRow.BackendMRPElement || "PurRqs", 
                     ProdVersion: oRow.ProdVersion || " ", 
@@ -615,15 +579,15 @@ sap.ui.define([
                     OldQuantity: 0, 
                     PurchaseReq: "", 
                     LineItem: "", 
-                    AvailDate: oEndDate, 
+                    AvailDate: oEndDate,            // <--- CRITICAL FIX: Passes a valid Date instead of null!
                     WkEndDate: oEndDate 
                 });
             } else {
                 aMatches.forEach(oMatch => {
                     let nItemOldQty = Number(oMatch[sWeek]) || 0;
                     fnPushToLog({ 
-                        Material: oRow.Material, 
-                        Plant: oRow.Plant, 
+                        Material: sMat, 
+                        Plant: sPlnt, 
                         Category: oRow.BackendCategory, 
                         MRPElement: oRow.BackendMRPElement, 
                         ProdVersion: oRow.ProdVersion, 
@@ -669,7 +633,7 @@ sap.ui.define([
                     ProdVersion: c.ProdVersion ? c.ProdVersion : " ", 
                     PurchaseReq: c.PurchaseReq, 
                     LineItem: c.LineItem, 
-                    AvailDate: c.AvailDate,
+                    AvailDate: c.AvailDate, 
                     WkEndDate: c.WkEndDate,
                     WeekNo: c.PeriodBucket + (sEndStr ? "|" + sEndStr : ""),               
                     WeekQty: c.NewQuantity.toString(),    

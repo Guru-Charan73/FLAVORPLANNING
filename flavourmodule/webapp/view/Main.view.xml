@@ -101,14 +101,18 @@
                 </table:extension> 
 
                 <table:columns>
-                    <table:Column width="120px">
+                    <table:Column width="125px">
                         <Label text="Category" design="Bold"/>
-                        <table:template><Text text="{Category}" wrapping="false"/></table:template>
+                        <table:template>
+                            <Label text="{Category}" wrapping="false" design="{= ${Category} === 'DEMAND' || ${Category} === 'SUPPLY' || ${Category} === 'INVENTORY' ? 'Bold' : 'Standard'}" />
+                        </table:template>
                     </table:Column>
                     
                     <table:Column width="175px">
                         <Label text="MRP Element" design="Bold"/>
-                        <table:template><Text text="{MRPElement}" wrapping="false"/></table:template>
+                        <table:template>
+                            <Label text="{MRPElement}" wrapping="false" design="{= ${MRPElement} === 'Stock Balance' ? 'Bold' : 'Standard'}" />
+                        </table:template>
                     </table:Column>
 
                     <table:Column width="55px">
