@@ -18,23 +18,20 @@ sap.ui.define([
     "sap/ui/model/FilterOperator",
     "sap/ui/comp/valuehelpdialog/ValueHelpDialog",
     "sap/ui/model/type/String",
-    "sap/ui/model/type/Float"
-], (Controller, JSONModel, MessageToast, MessageBox, Input, Label, Column, CustomData, DateFormat, VBox, HBox, ObjectStatus, ObjectNumber, Fragment, Token, Filter, FilterOperator, ValueHelpDialog, TypeString, TypeFloat) => {
+    "sap/ui/model/type/Float",
+    "sap/ui/core/Item"
+], (Controller, JSONModel, MessageToast, MessageBox, Input, Label, Column, CustomData, DateFormat, VBox, HBox, ObjectStatus, ObjectNumber, Fragment, Token, Filter, FilterOperator, ValueHelpDialog, TypeString, TypeFloat, CoreItem) => {
     "use strict";
 
     return Controller.extend("flavournamespace.flavourmodule.controller.Main", {
 
         onInit() {
-            // Removed the Compact Mode styling as requested.
+            window.myDebug = this; 
 
-            const oEmptyModel = new JSONModel({
-                mrpData: this._getEmptySkeleton()
-            });
+            const oEmptyModel = new JSONModel({ mrpData: this._getEmptySkeleton() });
             this.getView().setModel(oEmptyModel);
 
-            this._oBackupModel = new JSONModel({
-                mrpData: this._getEmptySkeleton()
-            });
+            this._oBackupModel = new JSONModel({ mrpData: this._getEmptySkeleton() });
 
             const oLocalModel = new JSONModel({
                 RawData: [],
@@ -52,17 +49,170 @@ sap.ui.define([
                 });
             }
 
-            this._aChangeLog = [];
+            this._aChangeLog = []; 
 
             const fnTokenValidator = args => {
-                let sKey = args.text;
+                let sText = args.text.toUpperCase(); 
+                let sKey = sText;
                 if (sKey.startsWith("=")) { sKey = sKey.substring(1); }
-                return new Token({ key: sKey, text: args.text });
+                return new Token({ key: sKey, text: sText });
             };
 
             ["inpPlant", "inpMaterial", "inpVendor"].forEach(id => {
-                if (this.byId(id)) this.byId(id).addValidator(fnTokenValidator);
+                const oInput = this.byId(id);
+                if (oInput) {
+                    oInput.addValidator(fnTokenValidator);
+                    oInput.attachLiveChange(function(oEvent) {
+                        let sValue = oEvent.getParameter("value");
+                        if (sValue !== sValue.toUpperCase()) {
+                            oEvent.getSource().setValue(sValue.toUpperCase());
+                        }
+                    });
+                }
             });
+
+            this._loadVariants();
+        },
+
+        _loadVariants() {
+            const oVM = this.byId("idVariantManagement");
+            if (!oVM) return;
+
+            oVM.removeAllItems();
+            oVM.addItem(new CoreItem({ key: "*standard*", text: "Standard" }));
+
+            const sData = localStorage.getItem("flavorVariants");
+            if (sData) {
+                try {
+                    this._aCustomVariants = JSON.parse(sData);
+                    this._aCustomVariants.forEach(v => {
+                        oVM.addItem(new CoreItem({ key: v.key, text: v.name }));
+                    });
+                } catch(e) {
+                    this._aCustomVariants = [];
+                }
+            } else {
+                this._aCustomVariants = [];
+            }
+
+            const sDef = localStorage.getItem("flavorDefVariant");
+            if (sDef) {
+                oVM.setDefaultVariantKey(sDef);
+                oVM.setInitialSelectionKey(sDef);
+                setTimeout(() => this._applyVariant(sDef), 300);
+            } else {
+                oVM.setDefaultVariantKey("*standard*");
+                oVM.setInitialSelectionKey("*standard*");
+            }
+        },
+
+        onSaveVariant(oEvent) {
+            const sName = oEvent.getParameter("name");
+            const bOverwrite = oEvent.getParameter("overwrite");
+            const bDefault = oEvent.getParameter("def");
+            let sKey = oEvent.getParameter("key");
+
+            const fnGetTokens = (id) => {
+                const oInp = this.byId(id);
+                return oInp ? oInp.getTokens().map(t => ({ key: t.getKey(), text: t.getText(), range: t.data("range") })) : [];
+            };
+
+            const oState = {
+                material: fnGetTokens("inpMaterial"),
+                plant: fnGetTokens("inpPlant"),
+                vendor: fnGetTokens("inpVendor"),
+                dateStart: this.byId("inpDateRange") ? this.byId("inpDateRange").getDateValue() : null,
+                dateEnd: this.byId("inpDateRange") ? this.byId("inpDateRange").getSecondDateValue() : null,
+                period: this.byId("inpPeriod") ? this.byId("inpPeriod").getSelectedKey() : "W"
+            };
+
+            if (bOverwrite && sKey !== "*standard*") {
+                const oVar = this._aCustomVariants.find(v => v.key === sKey);
+                if (oVar) oVar.state = oState;
+            } else {
+                sKey = "var_" + Date.now();
+                this._aCustomVariants.push({ key: sKey, name: sName, state: oState });
+                this.byId("idVariantManagement").addItem(new CoreItem({ key: sKey, text: sName }));
+            }
+
+            if (bDefault) {
+                this.byId("idVariantManagement").setDefaultVariantKey(sKey);
+                localStorage.setItem("flavorDefVariant", sKey);
+            } else if (localStorage.getItem("flavorDefVariant") === sKey) {
+                localStorage.removeItem("flavorDefVariant");
+            }
+
+            localStorage.setItem("flavorVariants", JSON.stringify(this._aCustomVariants));
+            MessageToast.show("Variant saved successfully.");
+        },
+
+        onSelectVariant(oEvent) {
+            const sKey = oEvent.getParameter("key");
+            this._applyVariant(sKey);
+        },
+
+        _applyVariant(sKey) {
+            if (sKey === "*standard*") {
+                this.byId("inpMaterial").removeAllTokens();
+                this.byId("inpPlant").removeAllTokens();
+                this.byId("inpVendor").removeAllTokens();
+                this.byId("inpDateRange").setValue("");
+                this.byId("inpPeriod").setSelectedKey("W");
+                return;
+            }
+
+            const oVariant = this._aCustomVariants.find(v => v.key === sKey);
+            if (oVariant) {
+                const fnSetTokens = (id, aToks) => {
+                    const oInp = this.byId(id);
+                    if (!oInp) return;
+                    oInp.removeAllTokens();
+                    if (aToks) {
+                        aToks.forEach(t => {
+                            const oTok = new Token({ key: t.key, text: t.text });
+                            if (t.range) oTok.data("range", t.range);
+                            oInp.addToken(oTok);
+                        });
+                    }
+                };
+                
+                fnSetTokens("inpMaterial", oVariant.state.material);
+                fnSetTokens("inpPlant", oVariant.state.plant);
+                fnSetTokens("inpVendor", oVariant.state.vendor);
+                
+                if (oVariant.state.dateStart) this.byId("inpDateRange").setDateValue(new Date(oVariant.state.dateStart));
+                if (oVariant.state.dateEnd) this.byId("inpDateRange").setSecondDateValue(new Date(oVariant.state.dateEnd));
+                
+                if (this.byId("inpPeriod")) this.byId("inpPeriod").setSelectedKey(oVariant.state.period || "W");
+                
+                this.onSearch();
+            }
+        },
+
+        onManageVariant(oEvent) {
+            const aDeleted = oEvent.getParameter("deleted") || [];
+            const aRenamed = oEvent.getParameter("renamed") || [];
+            const sDef = oEvent.getParameter("def");
+            const oVM = this.byId("idVariantManagement");
+
+            aDeleted.forEach(sDelKey => {
+                this._aCustomVariants = this._aCustomVariants.filter(v => v.key !== sDelKey);
+                oVM.removeItem(oVM.getItemByKey(sDelKey));
+                if (localStorage.getItem("flavorDefVariant") === sDelKey) {
+                    localStorage.removeItem("flavorDefVariant");
+                }
+            });
+
+            aRenamed.forEach(oRename => {
+                const oVar = this._aCustomVariants.find(v => v.key === oRename.key);
+                if (oVar) oVar.name = oRename.name;
+            });
+
+            if (sDef !== undefined) {
+                localStorage.setItem("flavorDefVariant", sDef);
+            }
+
+            localStorage.setItem("flavorVariants", JSON.stringify(this._aCustomVariants));
         },
 
         _getEmptySkeleton() {
@@ -73,15 +223,16 @@ sap.ui.define([
                 {
                     Category: "DEMAND", MRPElement: "Total Demand", BackendCategory: "1", BackendMRPElement: "XX", ...oEmptyWeeks,
                     nodes: [
-                        { Category: "", MRPElement: "Independent Demand", BackendCategory: "1", BackendMRPElement: "YY", ...oEmptyWeeks },
-                        { Category: "", MRPElement: "Dependent Requirements", BackendCategory: "1", BackendMRPElement: "ZZ", ...oEmptyWeeks }
+                        { Category: "", MRPElement: "Independent Demand", BackendCategory: "1", BackendMRPElement: "IndReq", ...oEmptyWeeks, nodes: [] },
+                        { Category: "", MRPElement: "SalesOrders", BackendCategory: "1", BackendMRPElement: "SalesOrders", ...oEmptyWeeks, nodes: [] },
+                        { Category: "", MRPElement: "Dependent Requirements", BackendCategory: "1", BackendMRPElement: "DepReq", ...oEmptyWeeks, nodes: [] }
                     ]
                 },
                 {
                     Category: "SUPPLY", MRPElement: "Total Supply", BackendCategory: "2", BackendMRPElement: "XX", ...oEmptyWeeks,
                     nodes: [
-                        { Category: "", MRPElement: "Purchase Requisitions", BackendCategory: "2", BackendMRPElement: "PurRqs", ...oEmptyWeeks, nodes: [] },
-                        { Category: "", MRPElement: "Purchase Orders", BackendCategory: "2", BackendMRPElement: "PurOrd", ...oEmptyWeeks }
+                        { Category: "", MRPElement: "PurReq", BackendCategory: "2", BackendMRPElement: "PurRqs", ...oEmptyWeeks, nodes: [] },
+                        { Category: "", MRPElement: "PurOrd", BackendCategory: "2", BackendMRPElement: "PurOrd", ...oEmptyWeeks, nodes: [] }
                     ]
                 },
                 {
@@ -94,19 +245,59 @@ sap.ui.define([
         _mapODataToSkeleton(aFlatData) {
             const aTree = this._getEmptySkeleton();
 
+            const aUniqueCombos = [];
+            aFlatData.forEach(r => {
+                const sMat = (r.Material || "").trim();
+                const sPlnt = (r.Plant || "").trim();
+                const sVer = (r.ProdVersion || "").trim();
+                if (sMat && sPlnt) {
+                    const bExists = aUniqueCombos.some(c => c.mat === sMat && c.plnt === sPlnt && c.ver === sVer);
+                    if (!bExists) aUniqueCombos.push({ mat: sMat, plnt: sPlnt, ver: sVer });
+                }
+            });
+
+            aTree.forEach(oTop => {
+                if (oTop.Category === "SUPPLY" && oTop.nodes) {
+                    oTop.nodes.forEach(oMid => {
+                        if (oMid.BackendMRPElement === "PurRqs" || oMid.BackendMRPElement === "PurOrd") {
+                            if (!oMid.nodes) oMid.nodes = [];
+                            aUniqueCombos.forEach(combo => {
+                                let oLeaf = {
+                                    Category: "", MRPElement: "", 
+                                    ProdVersion: combo.ver, 
+                                    Material: combo.mat,
+                                    Plant: combo.plnt, 
+                                    BackendCategory: oMid.BackendCategory, 
+                                    BackendMRPElement: oMid.BackendMRPElement
+                                };
+                                for (let i = 1; i <= 54; i++) { oLeaf["W" + i] = 0; }
+                                oMid.nodes.push(oLeaf);
+                            });
+                        }
+                    });
+                }
+            });
+
             aFlatData.forEach(oRow => {
-                const sCat = (oRow.Category || "").trim();
+                let sCat = "";
+                if (oRow.Category) {
+                    sCat = parseInt(oRow.Category, 10).toString(); 
+                }
+                
                 const sMrp = (oRow.MRPElement || "").trim();
-                const sVer = (oRow.ProdVersion || "").trim();
                 const sPlant = (oRow.Plant || "").trim(); 
+                const sVer = (oRow.ProdVersion || "").trim(); 
+                const sMat = (oRow.Material || "").trim();
 
                 aTree.forEach(oParent => {
                     if (oParent.nodes) {
                         oParent.nodes.forEach(oChild => {
-                            if (oChild.BackendCategory === sCat && oChild.BackendMRPElement === sMrp) {
+                            if (oChild.BackendCategory === sCat && 
+                               (oChild.BackendMRPElement === sMrp || (sMrp === "1A" && oChild.BackendMRPElement === "IndReq"))) {
+                                
                                 if (!oChild.nodes) oChild.nodes = [];
 
-                                let oLeaf = oChild.nodes.find(leaf => leaf.ProdVersion === sVer && leaf.Plant === sPlant);
+                                let oLeaf = oChild.nodes.find(leaf => leaf.Plant === sPlant && leaf.ProdVersion === sVer && leaf.Material === sMat);
 
                                 if (oLeaf) {
                                     for (let i = 1; i <= 54; i++) {
@@ -115,8 +306,12 @@ sap.ui.define([
                                     }
                                 } else {
                                     oLeaf = {
-                                        Category: "", MRPElement: "", ProdVersion: sVer, Material: oRow.Material,
-                                        Plant: sPlant, BackendCategory: sCat, BackendMRPElement: sMrp
+                                        Category: "", MRPElement: "", 
+                                        ProdVersion: sVer, 
+                                        Material: sMat,
+                                        Plant: sPlant, 
+                                        BackendCategory: sCat, 
+                                        BackendMRPElement: sMrp
                                     };
                                     for (let i = 1; i <= 54; i++) { oLeaf["W" + i] = Number(oRow["W" + i]) || 0; }
                                     oChild.nodes.push(oLeaf);
@@ -129,7 +324,13 @@ sap.ui.define([
 
             aTree.forEach(p => {
                 if (p.nodes) p.nodes.forEach(c => {
-                    if (c.nodes) c.nodes.sort((a, b) => a.ProdVersion.localeCompare(b.ProdVersion, undefined, { numeric: true }));
+                    if (c.nodes) {
+                        c.nodes.sort((a, b) => {
+                            let plantCmp = a.Plant.localeCompare(b.Plant);
+                            if (plantCmp !== 0) return plantCmp;
+                            return a.ProdVersion.localeCompare(b.ProdVersion, undefined, { numeric: true });
+                        });
+                    }
                 });
             });
 
@@ -218,11 +419,26 @@ sap.ui.define([
                 filters: aFilters,
                 success: oData => {
                     this.getView().setBusy(false);
+                    
+                    // =========================================================
+                    // THE FIX: Check if the backend returned zero records!
+                    // =========================================================
+                    if (!oData.results || oData.results.length === 0) {
+                        this.getView().getModel("localModel").setProperty("/RawData", []);
+                        const aEmpty = this._getEmptySkeleton();
+                        this.getView().getModel().setProperty("/mrpData", aEmpty);
+                        this._oBackupModel.setProperty("/mrpData", JSON.parse(JSON.stringify(aEmpty)));
+                        MessageBox.information("No data found for this selection criteria.");
+                        return; // Stop right here, don't build the table or say success!
+                    }
+
                     this.getView().getModel("localModel").setProperty("/RawData", oData.results);
                     const aResult = this._mapODataToSkeleton(oData.results);
                     this.getView().getModel().setProperty("/mrpData", aResult);
                     this._oBackupModel.setProperty("/mrpData", JSON.parse(JSON.stringify(aResult)));
-                    this.byId("idMrpTreeTable").expandToLevel(2);
+                    
+                    this.byId("idMrpTreeTable").expandToLevel(1);
+                    
                     MessageToast.show("Data loaded successfully.");
                 },
                 error: () => { this.getView().setBusy(false); MessageBox.error("Backend Error."); }
@@ -245,7 +461,6 @@ sap.ui.define([
             });
 
             const aRangeKeyFields = [{ label: sField, key: sField, type: "string", typeInstance: new TypeString({}, {maxLength: 40}) }];
-            // @ts-ignore
             oValueHelpDialog.setRangeKeyFields(aRangeKeyFields);
             oValueHelpDialog.setTokens(oInput.getTokens());
             this.getView().addDependent(oValueHelpDialog);
@@ -289,46 +504,51 @@ sap.ui.define([
             const aCols = oTable.getColumns();
             for (let i = aCols.length - 1; i >= 4; i--) oTable.removeColumn(aCols[i]).destroy();
 
-            // ==========================================================
-            // FIX: Guaranteed 3 Decimal Digits with auto-formatting
-            // ==========================================================
-            const oDecimalType = new TypeFloat({ 
-                minFractionDigits: 3, 
-                maxFractionDigits: 3, 
-                groupingEnabled: true, 
-                parseEmptyValueToZero: true 
+            const oInputDecimalType = new TypeFloat({ 
+                minFractionDigits: 3, maxFractionDigits: 3, 
+                groupingEnabled: false, parseEmptyValueToZero: true 
+            });
+
+            const oDisplayDecimalType = new TypeFloat({ 
+                minFractionDigits: 3, maxFractionDigits: 3, 
+                groupingEnabled: true, parseEmptyValueToZero: true 
             });
 
             aBuckets.forEach(oBuck => {
+                
                 const oInp = new Input({
-                    value: { path: oBuck.key, type: oDecimalType }, 
+                    value: { path: oBuck.key, type: oInputDecimalType }, 
                     textAlign: "End",
                     visible: { path: 'Category', formatter: c => c !== 'INVENTORY' },
-                    editable: { parts: ['nodes'], formatter: n => !(n && n.length > 0) },
+                    editable: { 
+                        parts: ['nodes', 'BackendCategory', 'Material'], 
+                        formatter: (nodes, category, material) => {
+                            if (category === "1") return false; 
+                            if (!material) return false; 
+                            return true;
+                        } 
+                    },
                     change: this.onValueChange.bind(this)
                 }).addCustomData(new CustomData({ key: "weekProp", value: oBuck.key }))
                   .addCustomData(new CustomData({ key: "columnLabel", value: oBuck.label }));
 
                 oInp.addEventDelegate({ ondblclick: (e) => this.onCellDoubleClick(e.srcControl) });
 
+                const oInventoryText = new ObjectNumber({
+                    number: { path: oBuck.key, type: oDisplayDecimalType }, 
+                    emphasized: true, textAlign: "End",
+                    visible: { path: 'Category', formatter: c => c === 'INVENTORY' },
+                    state: { path: oBuck.key, formatter: v => Number(v) < 0 ? "Error" : "Success" }
+                });
+
                 oTable.addColumn(new Column({
                     label: new Label({ text: oBuck.label, design: "Bold", textAlign: "End", width: "100%" }),
-                    
-                    // ==========================================================
-                    // FIX: Wider width to fit large numbers with decimals + Auto Resizing
-                    // ==========================================================
                     width: "150px", 
                     autoResizable: true,
-
                     hAlign: "End",
                     template: new HBox({ justifyContent: "End", items: [
                         oInp,
-                        new ObjectNumber({
-                            number: { path: oBuck.key, type: oDecimalType }, 
-                            emphasized: true, textAlign: "End",
-                            visible: { path: 'Category', formatter: c => c === 'INVENTORY' },
-                            state: { path: oBuck.key, formatter: v => Number(v) < 0 ? "Error" : "Success" }
-                        })
+                        oInventoryText
                     ]})
                 }));
             });
@@ -340,40 +560,83 @@ sap.ui.define([
             const sWeek = oInp.data("weekProp");
             let sPath = oInp.getBindingContext().getPath();
             const oRow = oMod.getProperty(sPath);
-            let nVal = Number(oInp.getValue()) || 0;
+            let nVal = Number(oInp.getValue()) || 0; 
 
             const aRawData = this.getView().getModel("localModel").getProperty("/RawData");
             const aBuckets = this.getView().getModel("localModel").getProperty("/TimeBuckets");
             
-            let sPurchaseReq = "";
-            let oAvailDate = null;
             let oEndDate = null;
-
             if (aBuckets) {
                 const oBucketDef = aBuckets.find(b => b.key === sWeek);
                 if (oBucketDef) oEndDate = oBucketDef.endDate;
             }
 
+            let sMat = oRow.Material;
+            if (!sMat) {
+                const aMatTokens = this.byId("inpMaterial").getTokens();
+                if (aMatTokens.length > 0) sMat = aMatTokens[0].getKey();
+            }
+
+            let sPlnt = oRow.Plant;
+            if (!sPlnt) {
+                const aPlntTokens = this.byId("inpPlant").getTokens();
+                if (aPlntTokens.length > 0) sPlnt = aPlntTokens[0].getKey();
+            }
+
+            let aMatches = [];
             if (aRawData) {
-                const oMatch = aRawData.find(r => 
+                aMatches = aRawData.filter(r => 
                     r.Material === oRow.Material && r.Plant === oRow.Plant && 
                     r.ProdVersion === oRow.ProdVersion && r.MRPElement === oRow.BackendMRPElement &&
                     Number(r[sWeek]) > 0 
                 );
-                if (oMatch) {
-                    sPurchaseReq = oMatch.PurchaseReq || "";
-                    oAvailDate = oMatch.AvailDate; 
-                }
             }
 
-            this._aChangeLog.push({ 
-                Material: oRow.Material, Plant: oRow.Plant, Category: oRow.BackendCategory, 
-                MRPElement: oRow.BackendMRPElement, ProdVersion: oRow.ProdVersion, 
-                PeriodBucket: sWeek, NewQuantity: nVal,
-                PurchaseReq: sPurchaseReq,
-                AvailDate: oAvailDate,
-                WkEndDate: oEndDate 
-            });
+            const fnPushToLog = (oContext) => {
+                const idx = this._aChangeLog.findIndex(c => 
+                    c.Material === oContext.Material && c.Plant === oContext.Plant && 
+                    c.ProdVersion === oContext.ProdVersion && c.MRPElement === oContext.MRPElement &&
+                    c.PeriodBucket === oContext.PeriodBucket && c.PurchaseReq === oContext.PurchaseReq && 
+                    c.LineItem === oContext.LineItem
+                );
+                if (idx !== -1) { this._aChangeLog[idx] = oContext; } 
+                else { this._aChangeLog.push(oContext); }
+            };
+
+            if (aMatches.length === 0) {
+                fnPushToLog({ 
+                    Material: sMat, 
+                    Plant: sPlnt, 
+                    Category: oRow.BackendCategory || "2", 
+                    MRPElement: oRow.BackendMRPElement || "PurRqs", 
+                    ProdVersion: oRow.ProdVersion || " ", 
+                    PeriodBucket: sWeek, 
+                    NewQuantity: nVal, 
+                    OldQuantity: 0, 
+                    PurchaseReq: "", 
+                    LineItem: "", 
+                    AvailDate: oEndDate, 
+                    WkEndDate: oEndDate 
+                });
+            } else {
+                aMatches.forEach(oMatch => {
+                    let nItemOldQty = Number(oMatch[sWeek]) || 0;
+                    fnPushToLog({ 
+                        Material: oRow.Material, 
+                        Plant: oRow.Plant, 
+                        Category: oRow.BackendCategory, 
+                        MRPElement: oRow.BackendMRPElement, 
+                        ProdVersion: oRow.ProdVersion, 
+                        PeriodBucket: sWeek, 
+                        NewQuantity: nVal,         
+                        OldQuantity: nItemOldQty,  
+                        PurchaseReq: oMatch.PurchaseReq || "",
+                        LineItem: oMatch.LineItem || "", 
+                        AvailDate: oMatch.AvailDate,
+                        WkEndDate: oEndDate 
+                    });
+                });
+            }
 
             while (sPath.includes("/nodes/")) {
                 const aParts = sPath.split("/"); aParts.pop(); aParts.pop(); sPath = aParts.join("/");
@@ -386,12 +649,146 @@ sap.ui.define([
             this._recalculateEntireTree(oMod.getProperty("/mrpData"));
         },
 
+        onSave() {
+            if (this._aChangeLog.length === 0) return MessageBox.information("No changes to save.");
+            const oOData = this.getOwnerComponent().getModel();
+            oOData.setUseBatch(true);
+            oOData.setDeferredGroups(["grp"]);
+
+            const oDateFmt = sap.ui.core.format.DateFormat.getDateInstance({pattern: "yyyyMMdd"});
+
+            this._aChangeLog.forEach(c => {
+                
+                let sEndStr = c.WkEndDate ? oDateFmt.format(c.WkEndDate) : "";
+
+                const payload = { 
+                    Material: c.Material, 
+                    Plant: c.Plant, 
+                    Category: c.Category, 
+                    MRPElement: c.MRPElement, 
+                    ProdVersion: c.ProdVersion ? c.ProdVersion : " ", 
+                    PurchaseReq: c.PurchaseReq, 
+                    LineItem: c.LineItem, 
+                    AvailDate: c.AvailDate,
+                    WkEndDate: c.WkEndDate,
+                    WeekNo: c.PeriodBucket + (sEndStr ? "|" + sEndStr : ""),               
+                    WeekQty: c.NewQuantity.toString(),    
+                    ReqQuantity: c.OldQuantity.toString() 
+                };
+                
+                payload[c.PeriodBucket] = c.NewQuantity.toString();
+                
+                oOData.create("/FlavorPlan", payload, { groupId: "grp" });
+            });
+
+            this.getView().setBusy(true);
+            oOData.submitChanges({
+                groupId: "grp",
+                success: () => { 
+                    this.getView().setBusy(false); 
+                    MessageToast.show("Saved successfully via POST."); 
+                    this._aChangeLog = []; 
+                    
+                    this.getView().getModel().refresh(); 
+                    this.onSearch(); 
+                },
+                error: () => { 
+                    this.getView().setBusy(false); 
+                    MessageBox.error("Save Error."); 
+                }
+            });
+        },
+        
+        onRefresh() { this.onSearch(); },
+        
+        onToggleTheme(oEvent) {
+            const oButton = oEvent.getSource();
+            const oTheming = sap.ui.require("sap/ui/core/Theming");
+            
+            const sCurrentTheme = oTheming ? oTheming.getTheme() : sap.ui.getCore().getConfiguration().getTheme();
+            const isDark = sCurrentTheme.includes("dark");
+
+            const newTheme = isDark ? "sap_horizon" : "sap_horizon_dark";
+
+            if (oTheming) {
+                oTheming.setTheme(newTheme);
+            } else {
+                sap.ui.getCore().applyTheme(newTheme);
+            }
+
+            oButton.setIcon(isDark ? "sap-icon://eclipse" : "sap-icon://lightbulb");
+        },
+
+        onCloseDocFragment: function () {
+            if (this._pDocPopover) {
+                this._pDocPopover.then(function(oPopover){ oPopover.close(); });
+            }
+        },
+
+        _showDocumentDetails: function (oInput, oRowData, sWeek) {
+            let aRawBackendData = this.getView().getModel("localModel").getProperty("/RawData");
+            if (!aRawBackendData) return;
+
+            let sConfig = {};
+            let aMappedItems = [];
+
+            if (oRowData.BackendMRPElement === "PurRqs") {
+                sConfig = { Title: "Purchase Requisition Details", Col1Label: "Prod Ver Txt", DocColLabel: "Purchase Req" };
+                aMappedItems = aRawBackendData.filter(row => 
+                    row.Material === oRowData.Material && row.ProdVersion === oRowData.ProdVersion && 
+                    row.MRPElement === "PurRqs" && Number(row[sWeek]) > 0
+                ).map(row => {
+                    let aParts = (row.ProdVersion || "").split(" / ");
+                    return {
+                        Category: "Supply", MRPElementText: "Purchase Req", ProdVersion: aParts[0] ? aParts[0].trim() : "", 
+                        Col1Value: aParts[1] ? aParts.slice(1).join(" / ").trim() : (row.ProdVerText || ""), 
+                        DocNumber: row.PurchaseReq, DocItem: row.LineItem, Material: row.Material, 
+                        Plant: oRowData.Plant, BackendCategory: oRowData.BackendCategory, 
+                        BackendMRPElement: "PurRqs", 
+                        Description: row.MaterialDesc, Quantity: row.ReqQuantity, AvailDate: row.AvailDate
+                    };
+                });
+            } else if (oRowData.BackendMRPElement === "PurOrd") {  
+                sConfig = { Title: "Purchase Order Details", Col1Label: "Prod Ver Txt", DocColLabel: "Purchase Order" };
+                aMappedItems = aRawBackendData.filter(row => 
+                    row.Material === oRowData.Material && row.ProdVersion === oRowData.ProdVersion && 
+                    row.MRPElement === "PurOrd" && Number(row[sWeek]) > 0 
+                ).map(row => {
+                    let aParts = (row.ProdVersion || "").split(" / ");
+                    return {
+                        Category: "Supply", MRPElementText: "Purchase Order", ProdVersion: aParts[0] ? aParts[0].trim() : "", 
+                        Col1Value: aParts[1] ? aParts.slice(1).join(" / ").trim() : (row.ProdVerText || ""), 
+                        DocNumber: row.PurchaseReq, DocItem: row.LineItem, Material: row.Material, 
+                        Plant: oRowData.Plant, BackendCategory: oRowData.BackendCategory, 
+                        BackendMRPElement: "PurOrd", 
+                        Description: row.MaterialDesc, Quantity: row.ReqQuantity, AvailDate: row.AvailDate
+                    };
+                });
+            }
+
+            this.getView().getModel("localModel").setProperty("/PopoverConfig", sConfig);
+            this.getView().getModel("localModel").setProperty("/SelectedItems", aMappedItems);
+
+            if (!this._pDocPopover) {
+                this._pDocPopover = sap.ui.core.Fragment.load({
+                    id: this.getView().getId(), name: "flavournamespace.flavourmodule.view.DocumentDetails", controller: this
+                }).then(function(oPopover) {
+                    this.getView().addDependent(oPopover); return oPopover;
+                }.bind(this));
+            }
+            this._pDocPopover.then(function(oPopover) { 
+                const oTable = this.byId("idDocDetailsTable");
+                if (oTable) oTable.removeSelections(true); 
+                oPopover.openBy(oInput); 
+            }.bind(this));
+        },
+
         onCellDoubleClick(oInp) {
             const oCtx = oInp.getBindingContext();
             const oRow = oCtx.getProperty();
             const sWeek = oInp.data("weekProp");
 
-            if (oRow.BackendMRPElement === "PurRqs" || oRow.BackendMRPElement === "BB") {
+            if (oRow.BackendMRPElement === "PurRqs" || oRow.BackendMRPElement === "PurOrd" || oRow.BackendMRPElement === "BB") {
                 this._showDocumentDetails(oInp, oRow, sWeek);
             } else {
                 this._oCurrentEditContext = {
@@ -416,107 +813,64 @@ sap.ui.define([
             this.byId("fragQty").setNumber(d.value);
         },
 
-        onCloseFragment() { if (this._oDetailDialog) this._oDetailDialog.close(); },
+        onConvertPrToPo: function () {
+            const oTable = this.byId("idDocDetailsTable");
+            const aSelectedContexts = oTable.getSelectedContexts();
 
-        onSave() {
-            if (this._aChangeLog.length === 0) return MessageBox.information("No changes.");
+            if (aSelectedContexts.length === 0) {
+                MessageBox.warning("Please select at least one document to convert.");
+                return;
+            }
+
+            const aSelectedPRs = aSelectedContexts.map(oContext => oContext.getObject());
             const oOData = this.getOwnerComponent().getModel();
+            
             oOData.setUseBatch(true);
-            oOData.setDeferredGroups(["grp"]);
+            oOData.setDeferredGroups(["convertGrp"]);
 
-            this._aChangeLog.forEach(c => {
+            aSelectedPRs.forEach(pr => {
                 const payload = { 
-                    Material: c.Material, Plant: c.Plant, Category: c.Category, 
-                    MRPElement: c.MRPElement, ProdVersion: c.ProdVersion,
-                    PurchaseReq: c.PurchaseReq, 
-                    AvailDate: c.AvailDate,
-                    WkEndDate: c.WkEndDate 
+                    Material: pr.Material, 
+                    Plant: pr.Plant, 
+                    Category: pr.BackendCategory || "2", 
+                    MRPElement: pr.BackendMRPElement, 
+                    ProdVersion: pr.ProdVersion ? pr.ProdVersion : " ", 
+                    PurchaseReq: pr.DocNumber, 
+                    LineItem: pr.DocItem, 
+                    ReqQuantity: pr.Quantity.toString(),
+                    AvailDate: pr.AvailDate,
+                    IsConvert: true 
                 };
-                payload[c.PeriodBucket] = c.NewQuantity.toString();
                 
-                oOData.create("/FlavorPlan", payload, { groupId: "grp" });
+                oOData.create("/FlavorPlan", payload, { groupId: "convertGrp" });
             });
 
             this.getView().setBusy(true);
+            
             oOData.submitChanges({
-                groupId: "grp",
+                groupId: "convertGrp",
                 success: () => { 
                     this.getView().setBusy(false); 
-                    MessageToast.show("Saved successfully via POST."); 
+                    MessageToast.show("Processing successful!"); 
+                    
+                    const oTableToClear = this.byId("idDocDetailsTable");
+                    if (oTableToClear) {
+                        oTableToClear.removeSelections(true);
+                    }
+                    
+                    this.onCloseDocFragment(); 
                     this._aChangeLog = []; 
+                    
+                    this.getView().getModel().refresh(); 
                     this.onSearch(); 
                 },
                 error: () => { 
                     this.getView().setBusy(false); 
-                    MessageBox.error("Save Error."); 
+                    MessageBox.error("Processing failed."); 
                 }
             });
         },
 
-        onRefresh() { this.onSearch(); },
-        
-        onToggleTheme(oEvent) {
-            const oTheming = sap.ui.require("sap/ui/core/Theming");
-            const isDark = (oTheming ? oTheming.getTheme() : sap.ui.getCore().getConfiguration().getTheme()).includes("dark");
-            const newTheme = isDark ? "sap_horizon" : "sap_horizon_dark";
-            if (oTheming) oTheming.setTheme(newTheme); else sap.ui.getCore().applyTheme(newTheme);
-            oEvent.getSource().setIcon(isDark ? "sap-icon://lightbulb" : "sap-icon://eclipse");
-        },
-
-        onCloseDocFragment: function () {
-            if (this._pDocPopover) {
-                this._pDocPopover.then(function(oPopover){ oPopover.close(); });
-            }
-        },
-
-        _showDocumentDetails: function (oInput, oRowData, sWeek) {
-            let aRawBackendData = this.getView().getModel("localModel").getProperty("/RawData");
-            if (!aRawBackendData) return;
-
-            let sConfig = {};
-            let aMappedItems = [];
-
-            if (oRowData.BackendMRPElement === "PurRqs") {
-                sConfig = { Title: "Purchase Requisition Details", Col1Label: "Prod Ver Txt", DocColLabel: "Purchase Req" };
-                aMappedItems = aRawBackendData.filter(row => 
-                    row.Material === oRowData.Material && row.ProdVersion === oRowData.ProdVersion && 
-                    row.MRPElement === "PurRqs" && Number(row[sWeek]) > 0
-                ).map(row => {
-                    let aParts = (row.ProdVersion || "").split(" / ");
-                    let sVersion = aParts[0] ? aParts[0].trim() : "";
-                    let sVerText = aParts[1] ? aParts.slice(1).join(" / ").trim() : (row.ProdVerText || "");
-                    return {
-                        Category: "Supply", MRPElementText: "Purchase Req", ProdVersion: sVersion, Col1Value: sVerText, 
-                        DocNumber: row.PurchaseReq, DocItem: row.LineItem, Material: row.Material, Description: row.MaterialDesc, Quantity: row.ReqQuantity
-                    };
-                });
-            } else if (oRowData.BackendMRPElement === "PurOrd") {  // <--- Here
-    sConfig = { Title: "Purchase Order Details", Col1Label: "Prod Ver Txt", DocColLabel: "Purchase Order" };
-    aMappedItems = aRawBackendData.filter(row => 
-        row.Material === oRowData.Material && row.ProdVersion === oRowData.ProdVersion && 
-        row.MRPElement === "PurOrd" && Number(row[sWeek]) > 0  // <--- And here
-                ).map(row => {
-                    let aParts = (row.ProdVersion || "").split(" / ");
-                    let sVersion = aParts[0] ? aParts[0].trim() : "";
-                    let sVerText = aParts[1] ? aParts.slice(1).join(" / ").trim() : (row.ProdVerText || "");
-                    return {
-                        Category: "Supply", MRPElementText: "Purchase Order", ProdVersion: sVersion, Col1Value: sVerText, 
-                        DocNumber: row.PurchaseReq, DocItem: row.LineItem, Material: row.Material, Description: row.MaterialDesc, Quantity: row.ReqQuantity
-                    };
-                });
-            }
-
-            this.getView().getModel("localModel").setProperty("/PopoverConfig", sConfig);
-            this.getView().getModel("localModel").setProperty("/SelectedItems", aMappedItems);
-
-            if (!this._pDocPopover) {
-                this._pDocPopover = sap.ui.core.Fragment.load({
-                    id: this.getView().getId(), name: "flavournamespace.flavourmodule.view.DocumentDetails", controller: this
-                }).then(function(oPopover) {
-                    this.getView().addDependent(oPopover); return oPopover;
-                }.bind(this));
-            }
-            this._pDocPopover.then(function(oPopover) { oPopover.openBy(oInput); });
-        }
+        onCloseFragment() { if (this._oDetailDialog) this._oDetailDialog.close(); }
     });
 });

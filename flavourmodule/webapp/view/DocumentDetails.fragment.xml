@@ -1,46 +1,48 @@
-<core:FragmentDefinition 
-    xmlns="sap.m" 
+<core:FragmentDefinition
+    xmlns="sap.m"
     xmlns:core="sap.ui.core">
-    <Popover title="{localModel>/PopoverConfig/Title}" placement="Auto" contentWidth="1200px" class="sapUiContentPadding">
+    
+    <Popover title="{localModel>/PopoverConfig/Title}" contentWidth="800px" placement="Auto">
+        <content>
+            <Table id="idDocDetailsTable" 
+                   mode="MultiSelect" 
+                   items="{localModel>/SelectedItems}">
+                <columns>
+                    <Column><Text text="Category"/></Column>
+                    <Column><Text text="Prod Version"/></Column>
+                    <Column><Text text="{localModel>/PopoverConfig/Col1Label}"/></Column>
+                    <Column><Text text="{localModel>/PopoverConfig/DocColLabel}"/></Column>
+                    <Column><Text text="Line Item"/></Column>
+                    <Column><Text text="Material"/></Column>
+                    <Column><Text text="Quantity"/></Column>
+                </columns>
+                <items>
+                    <ColumnListItem>
+                        <cells>
+                            <Text text="{localModel>Category}"/>
+                            <Text text="{localModel>ProdVersion}"/>
+                            <Text text="{localModel>Col1Value}"/>
+                            <Text text="{localModel>DocNumber}"/>
+                            <Text text="{localModel>DocItem}"/>
+                            <Text text="{localModel>Material}"/>
+                            <Text text="{localModel>Quantity}"/>
+                        </cells>
+                    </ColumnListItem>
+                </items>
+            </Table>
+        </content>
         
-        <endButton>
-            <Button text="Close" press=".onCloseDocFragment" type="Reject" />
-        </endButton>
-
-        <Table id="dynamicDetailsTable" items="{localModel>/SelectedItems}">
-            <columns>
-                <Column><Text text="Category" /></Column>
-                <Column><Text text="MRP Element" /></Column>
-                <Column><Text text="Prod Version" /></Column>
-                
-                <Column><Text text="{localModel>/PopoverConfig/Col1Label}" /></Column>
-                <Column><Text text="{localModel>/PopoverConfig/DocColLabel}" /></Column>
-                
-                <Column width="5rem"><Text text="Line Item" /></Column>
-                <Column><Text text="Material" /></Column>
-                <Column><Text text="Description" /></Column>
-                <Column hAlign="End"><Text text="Quantity" /></Column>
-            </columns>
-            <items>
-                <ColumnListItem>
-                    <cells>
-                        <Text text="{localModel>Category}" />
-                        <Text text="{localModel>MRPElementText}" />
-                        <Text text="{localModel>ProdVersion}" />
-                        
-                        <Text text="{localModel>Col1Value}" />
-                        <Text text="{localModel>DocNumber}" />
-                        <Text text="{localModel>DocItem}" />
-                        <Text text="{localModel>Material}" />
-                        <Text text="{localModel>Description}" />
-                        <Text text="{
-                            path: 'localModel>Quantity',
-                            type: 'sap.ui.model.type.Float',
-                            formatOptions: { minFractionDigits: 3, maxFractionDigits: 3 }
-                        }" /> 
-                    </cells>
-                </ColumnListItem>
-            </items>
-        </Table>
+        <footer>
+            <Toolbar>
+                <ToolbarSpacer/>
+                <Button 
+                    text="PR to PO" 
+                    type="Emphasized" 
+                    icon="sap-icon://cart-3"
+                    visible="{= ${localModel>/PopoverConfig/DocColLabel} === 'Purchase Req' }"
+                    press=".onConvertPrToPo" />
+                <Button text="Close" press=".onCloseDocFragment" />
+            </Toolbar>
+        </footer>
     </Popover>
 </core:FragmentDefinition>

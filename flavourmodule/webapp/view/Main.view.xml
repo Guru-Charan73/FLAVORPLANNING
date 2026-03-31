@@ -5,27 +5,37 @@
     xmlns:fb="sap.ui.comp.filterbar"
     xmlns:table="sap.ui.table"
     xmlns:core="sap.ui.core"
-    class="sapUiSizeCompact"> 
+    class="sapUiSizeCompact sapUiNoContentPadding"> 
     
     <f:DynamicPage 
         id="dynamicPageId" 
         headerExpanded="true" 
         preserveHeaderStateOnScroll="true" 
         toggleHeaderOnTitleClick="false" 
-        fitContent="true">
+        fitContent="true"
+        class="sapUiNoContentPadding">
         
         <f:title>
             <f:DynamicPageTitle>
                 <f:heading>
-                    <Title text="Flavor Planning" level="H1"/>
+                    <HBox alignItems="Center">
+                        <VariantManagement 
+                            id="idVariantManagement" 
+                            save=".onSaveVariant" 
+                            select=".onSelectVariant"
+                            manage=".onManageVariant" />
+                        <Title text="Flavor Planning" level="H1" class="sapUiSmallMarginBegin"/>
+                    </HBox>
                 </f:heading>
-                <f:navigationActions>
+                <f:actions>
                     <Button 
-                        icon="sap-icon://lightbulb" 
-                        type="Transparent" 
-                        tooltip="Toggle Dark/Light Mode" 
-                        press=".onToggleTheme"/>
-                </f:navigationActions>
+                        id="themeToggleBtn"
+                        icon="sap-icon://eclipse" 
+                        text="Theme"
+                        type="Emphasized" 
+                        tooltip="Toggle Light/Dark Mode"
+                        press=".onToggleTheme" />
+                </f:actions>
                 
                 <f:expandedContent>
                     <fb:FilterBar id="filterbar" reset="onReset" search="onSearch" useToolbar="false" showGoOnFB="true">
@@ -88,7 +98,7 @@
                         <Button text="Save Changes" type="Emphasized" press=".onSave" icon="sap-icon://save"/>
                         <Button text="Refresh" press=".onRefresh" icon="sap-icon://refresh" type="Transparent"/>
                     </OverflowToolbar>
-                </table:extension>
+                </table:extension> 
 
                 <table:columns>
                     <table:Column width="120px">
@@ -101,7 +111,7 @@
                         <table:template><Text text="{MRPElement}" wrapping="false"/></table:template>
                     </table:Column>
 
-                    <table:Column width="52px">
+                    <table:Column width="55px">
                         <Label text="Plant" design="Bold"/>
                         <table:template><Text text="{Plant}" wrapping="false"/></table:template>
                     </table:Column>
