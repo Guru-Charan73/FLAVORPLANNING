@@ -108,7 +108,7 @@
                         </table:template>
                     </table:Column>
                     
-                    <table:Column width="175px">
+                    <table:Column width="190px">
                         <Label text="MRP Element" design="Bold"/>
                         <table:template>
                             <Label text="{MRPElement}" wrapping="false" design="{= ${MRPElement} === 'Stock Balance' ? 'Bold' : 'Standard'}" />
@@ -120,7 +120,7 @@
                         <table:template><Text text="{Plant}" wrapping="false"/></table:template>
                     </table:Column>
                     
-                    <table:Column width="280px">
+                    <table:Column width="278px">
                         <Label text="Prod Version" design="Bold"/>
                         <table:template><Text text="{ProdVersion}" wrapping="false"/></table:template>
                     </table:Column>

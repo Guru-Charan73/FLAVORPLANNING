@@ -15,20 +15,20 @@
       "version": "1.20.4",
       "toolsId": "328f52c1-db77-4e1d-aa20-ab819e5a94e2"
     },
-    "dataSources": {
-      "ZUI_FLAVOR_PLANNING_V2_VAN": {
-        "uri": "/sap/opu/odata/IWFND/CATALOGSERVICE;v=2/Annotations(TechnicalName='ZUI_FLAVOR_PLANNING_V2_VAN',Version='0001')/$value/",
+     "dataSources": {
+      "Z_RICEF13_SRVBIND_FLAVPLAN_VAN": {
+        "uri": "/sap/opu/odata/IWFND/CATALOGSERVICE;v=2/Annotations(TechnicalName='Z_RICEF13_SRVBIND_FLAVPLAN_VAN',Version='0001')/$value/",
         "type": "ODataAnnotation",
         "settings": {
-          "localUri": "localService/mainService/ZUI_FLAVOR_PLANNING_V2_VAN.xml"
+          "localUri": "localService/mainService/Z_RICEF13_SRVBIND_FLAVPLAN_VAN.xml"
         }
       },
       "mainService": {
-        "uri": "/sap/opu/odata/sap/ZUI_FLAVOR_PLANNING_V2/",
+        "uri": "/sap/opu/odata/sap/Z_RICEF13_SRVBIND_FLAVPLAN/",
         "type": "OData",
         "settings": {
           "annotations": [
-            "ZUI_FLAVOR_PLANNING_V2_VAN"
+            "Z_RICEF13_SRVBIND_FLAVPLAN_VAN"
           ],
           "localUri": "localService/mainService/metadata.xml",
           "odataVersion": "2.0"

@@ -204,23 +204,31 @@ sap.ui.define([
 
             return [
                 {
-                    Category: "DEMAND", MRPElement: " ", BackendCategory: "1", BackendMRPElement: "XX", ...oEmptyWeeks,design: 'Bold',
+                    Category: "DEMAND", MRPElement: " ", BackendCategory: "1", BackendMRPElement: "XX", ...oEmptyWeeks,
                     nodes: [
-                        { Category: "", MRPElement: "Independent Demand", BackendCategory: "1", BackendMRPElement: "IndReq", ...oEmptyWeeks, nodes: [] },
-                        { Category: "", MRPElement: "SalesOrders", BackendCategory: "1", BackendMRPElement: "SalesOrders", ...oEmptyWeeks, nodes: [] },
-                        { Category: "", MRPElement: "Dependent Requirements", BackendCategory: "1", BackendMRPElement: "DepReq", ...oEmptyWeeks, nodes: [] }
+                        { Category: "", MRPElement: "Planned Independent Req.", BackendCategory: "1", BackendMRPElement: "IndReq", ...oEmptyWeeks, nodes: [] },
+                        { Category: "", MRPElement: "Sales Order", BackendCategory: "1", BackendMRPElement: "SalesOrders", ...oEmptyWeeks, nodes: [] },
+                        { Category: "", MRPElement: "Dependent Requirement", BackendCategory: "1", BackendMRPElement: "DepReq", ...oEmptyWeeks, nodes: [] }
                     ]
                 },
                 {
                     Category: "SUPPLY", MRPElement: " ", BackendCategory: "2", BackendMRPElement: "XX", ...oEmptyWeeks,
                     nodes: [
-                        { Category: "", MRPElement: "PurReq", BackendCategory: "2", BackendMRPElement: "PurRqs", ...oEmptyWeeks, nodes: [] },
-                        { Category: "", MRPElement: "PurOrd", BackendCategory: "2", BackendMRPElement: "PurOrd", ...oEmptyWeeks, nodes: [] }
+                        { Category: "", MRPElement: "PurRqs", BackendCategory: "2", BackendMRPElement: "PurRqs", ...oEmptyWeeks, nodes: [] },
+                        { Category: "", MRPElement: "POitem", BackendCategory: "2", BackendMRPElement: "PurOrd", ...oEmptyWeeks, nodes: [] }
                     ]
                 },
                 {
-                    Category: "INVENTORY", MRPElement: "Stock Balance", BackendCategory: "3", BackendMRPElement: "XX", ...oEmptyWeeks,
-                    nodes: []
+                    Category: "INVENTORY", 
+                    // =========================================================
+                    // FIX: Emptied MRPElement so "Stock Balance" is completely 
+                    // invisible on the UI as requested!
+                    // =========================================================
+                    MRPElement: "", 
+                    BackendCategory: "3", 
+                    BackendMRPElement: "XX", 
+                    ...oEmptyWeeks,
+                    nodes: [] // Left empty so no dropdown arrow appears
                 }
             ];
         },
@@ -237,6 +245,26 @@ sap.ui.define([
                 const sMrp = (oRow.MRPElement || "").trim();
                 const sPlant = (oRow.Plant || "").trim(); 
                 const sVer = (oRow.ProdVersion || "").trim(); 
+
+                // ====================================================================
+                // FIX: Intercept INVENTORY (Category 3) before the plant filter!
+                // We map the backend totals DIRECTLY to the parent INVENTORY row.
+                // ====================================================================
+                if (sCat === "3") {
+                    let oInvNode = aTree.find(n => n.Category === "INVENTORY");
+                    if (oInvNode) {
+                        for (let i = 1; i <= 54; i++) {
+                            // Map the raw backend numbers straight to the parent row
+                            oInvNode["W" + i] = (Number(oInvNode["W" + i]) || 0) + (Number(oRow["W" + i]) || 0);
+                        }
+                    }
+                    return; // Skip the rest of the loop! Do NOT create child nodes for Inventory.
+                }
+
+                // Ignore Backend Totals ONLY for Demand/Supply to prevent double counting
+                if (!sPlant || sPlant === "") {
+                    return; 
+                }
 
                 aTree.forEach(oParent => {
                     if (oParent.nodes) {
@@ -288,30 +316,27 @@ sap.ui.define([
         },
 
         _recalculateEntireTree(aTree) {
-            let oInv = null, oDem = null, oSup = null;
-
             aTree.forEach(oTop => {
-                if (oTop.Category === "DEMAND") oDem = oTop;
-                if (oTop.Category === "SUPPLY") oSup = oTop;
-                if (oTop.Category === "INVENTORY") oInv = oTop;
-
-                if (oTop.nodes) {
-                    oTop.nodes.forEach(oMid => {
-                        if (oMid.nodes && oMid.nodes.length > 0) {
-                            for (let i = 1; i <= 54; i++) {
-                                oMid["W" + i] = oMid.nodes.reduce((sum, leaf) => sum + (Number(leaf["W" + i]) || 0), 0);
+                // ====================================================================
+                // FIX: Only recalculate DEMAND and SUPPLY. 
+                // We leave INVENTORY alone because we directly mapped the backend 
+                // totals to it in the _mapODataToSkeleton function!
+                // ====================================================================
+                if (oTop.Category === "DEMAND" || oTop.Category === "SUPPLY") {
+                    if (oTop.nodes) {
+                        oTop.nodes.forEach(oMid => {
+                            if (oMid.nodes && oMid.nodes.length > 0) {
+                                for (let i = 1; i <= 54; i++) {
+                                    oMid["W" + i] = oMid.nodes.reduce((sum, leaf) => sum + (Number(leaf["W" + i]) || 0), 0);
+                                }
                             }
+                        });
+                        for (let i = 1; i <= 54; i++) {
+                            oTop["W" + i] = oTop.nodes.reduce((sum, mid) => sum + (Number(mid["W" + i]) || 0), 0);
                         }
-                    });
-                    for (let i = 1; i <= 54; i++) {
-                        oTop["W" + i] = oTop.nodes.reduce((sum, mid) => sum + (Number(mid["W" + i]) || 0), 0);
                     }
                 }
             });
-
-            if (oInv && oSup && oDem) {
-                for (let i = 1; i <= 54; i++) oInv["W" + i] = (Number(oSup["W" + i]) || 0) - (Number(oDem["W" + i]) || 0);
-            }
         },
 
         _buildTokenFilters(sField, aTokens) {
@@ -366,6 +391,9 @@ sap.ui.define([
             this.getView().setBusy(true);
             oODataModel.read("/FlavorPlan", {
                 filters: aFilters,
+                urlParameters: {
+                    "$top": 5000  
+                },
                 success: oData => {
                     this.getView().setBusy(false);
                     this.getView().getModel("localModel").setProperty("/RawData", oData.results);
@@ -452,7 +480,6 @@ sap.ui.define([
 
             aBuckets.forEach(oBuck => {
                 
-                // 1. The Input Box (Hidden ONLY for Inventory, Demand Totals, and Supply Totals)
                 const oInp = new Input({
                     value: { path: oBuck.key, type: oInputDecimalType }, 
                     textAlign: "End",
@@ -479,10 +506,9 @@ sap.ui.define([
 
                 oInp.addEventDelegate({ ondblclick: (e) => this.onCellDoubleClick(e.srcControl) });
 
-                // 2. THE BOLD TOTALS (Visible ONLY for Demand and Supply top rows)
                 const oBoldTotals = new ObjectNumber({
                     number: { path: oBuck.key, type: oDisplayDecimalType }, 
-                    emphasized: true, // <--- THIS MAKES THE NUMBERS BOLD
+                    emphasized: true,
                     textAlign: "End",
                     visible: { 
                         parts: ['Category'], 
@@ -492,7 +518,6 @@ sap.ui.define([
                     }
                 });
 
-                // 3. The Inventory Text
                 const oInventoryText = new ObjectNumber({
                     number: { path: oBuck.key, type: oDisplayDecimalType }, 
                     emphasized: true, textAlign: "End",
@@ -507,14 +532,14 @@ sap.ui.define([
                     hAlign: "End",
                     template: new HBox({ justifyContent: "End", items: [
                         oInp,
-                        oBoldTotals, // <--- Injected here
+                        oBoldTotals,
                         oInventoryText
                     ]})
                 }));
             });
         },
 
-        onValueChange(oEvent) {
+       onValueChange(oEvent) {
             const oInp = oEvent.getSource();
             const oMod = this.getView().getModel();
             const sWeek = oInp.data("weekProp");
@@ -525,15 +550,17 @@ sap.ui.define([
             const aRawData = this.getView().getModel("localModel").getProperty("/RawData");
             const aBuckets = this.getView().getModel("localModel").getProperty("/TimeBuckets");
             
+            // 1. EXTRACT THE EXACT START DATE OF THIS COLUMN
+            let oStartDate = null;
             let oEndDate = null;
             if (aBuckets) {
                 const oBucketDef = aBuckets.find(b => b.key === sWeek);
-                if (oBucketDef) oEndDate = oBucketDef.endDate;
+                if (oBucketDef) {
+                    oStartDate = oBucketDef.startDate; 
+                    oEndDate = oBucketDef.endDate;
+                }
             }
 
-            // =========================================================
-            // THE FIX: Dynamically pull Material and Plant from FilterBar if Row is Empty
-            // =========================================================
             let sMat = oRow.Material;
             if (!sMat) {
                 const aMatTokens = this.byId("inpMaterial").getTokens();
@@ -567,10 +594,9 @@ sap.ui.define([
             };
 
             if (aMatches.length === 0) {
-                // For completely empty buckets being newly created
                 fnPushToLog({ 
-                    Material: sMat,                 // Extracted fallback 
-                    Plant: sPlnt,                   // Extracted fallback
+                    Material: sMat,
+                    Plant: sPlnt,
                     Category: oRow.BackendCategory || "2", 
                     MRPElement: oRow.BackendMRPElement || "PurRqs", 
                     ProdVersion: oRow.ProdVersion || " ", 
@@ -579,7 +605,7 @@ sap.ui.define([
                     OldQuantity: 0, 
                     PurchaseReq: "", 
                     LineItem: "", 
-                    AvailDate: oEndDate,            // <--- CRITICAL FIX: Passes a valid Date instead of null!
+                    AvailDate: oStartDate, 
                     WkEndDate: oEndDate 
                 });
             } else {
@@ -596,7 +622,7 @@ sap.ui.define([
                         OldQuantity: nItemOldQty,  
                         PurchaseReq: oMatch.PurchaseReq || "",
                         LineItem: oMatch.LineItem || "", 
-                        AvailDate: oMatch.AvailDate,
+                        AvailDate: oStartDate, 
                         WkEndDate: oEndDate 
                     });
                 });
@@ -612,19 +638,20 @@ sap.ui.define([
             }
             this._recalculateEntireTree(oMod.getProperty("/mrpData"));
         },
-
+        
         onSave() {
             if (this._aChangeLog.length === 0) return MessageBox.information("No changes to save.");
+            
             const oOData = this.getOwnerComponent().getModel();
             oOData.setUseBatch(true);
             oOData.setDeferredGroups(["grp"]);
 
-            const oDateFmt = sap.ui.core.format.DateFormat.getDateInstance({pattern: "yyyyMMdd"});
+            const fnToUTC = (d) => {
+                if (!d) return null;
+                return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+            };
 
             this._aChangeLog.forEach(c => {
-                
-                let sEndStr = c.WkEndDate ? oDateFmt.format(c.WkEndDate) : "";
-
                 const payload = { 
                     Material: c.Material, 
                     Plant: c.Plant, 
@@ -633,32 +660,49 @@ sap.ui.define([
                     ProdVersion: c.ProdVersion ? c.ProdVersion : " ", 
                     PurchaseReq: c.PurchaseReq, 
                     LineItem: c.LineItem, 
-                    AvailDate: c.AvailDate, 
-                    WkEndDate: c.WkEndDate,
-                    WeekNo: c.PeriodBucket + (sEndStr ? "|" + sEndStr : ""),               
+                    
+                    AvailDate: fnToUTC(c.AvailDate), 
+                    WkEndDate: fnToUTC(c.WkEndDate),
+                    
+                    WeekNo: c.PeriodBucket,               
                     WeekQty: c.NewQuantity.toString(),    
                     ReqQuantity: c.OldQuantity.toString() 
                 };
-                
                 payload[c.PeriodBucket] = c.NewQuantity.toString();
-                
                 oOData.create("/FlavorPlan", payload, { groupId: "grp" });
             });
 
             this.getView().setBusy(true);
             oOData.submitChanges({
                 groupId: "grp",
-                success: () => { 
+                success: (oData) => { 
                     this.getView().setBusy(false); 
-                    MessageToast.show("Saved successfully via POST."); 
-                    this._aChangeLog = []; 
                     
-                    this.getView().getModel().refresh(); 
-                    this.onSearch(); 
+                    let aMsgs = this._extractBatchErrors(oData, this._aChangeLog);
+                    let aErrors = aMsgs.filter(m => m.type === "error" || m.type === "E");
+                    let aWarnings = aMsgs.filter(m => m.type !== "error" && m.type !== "E");
+
+                    if (aErrors.length > 0) {
+                        let sErrorText = aErrors.map(e => "• " + e.message).join("\n");
+                        MessageBox.error("Save completed with backend errors:\n\n" + sErrorText);
+                    } else if (aWarnings.length > 0) {
+                        let sWarningText = aWarnings.map(w => "• " + w.message).join("\n");
+                        MessageBox.warning("Saved with warnings/info:\n\n" + sWarningText);
+                        this._aChangeLog = []; 
+                        this.getView().getModel().refresh(); 
+                        this.onSearch(); 
+                    } else {
+                        MessageToast.show("Saved successfully."); 
+                        this._aChangeLog = []; 
+                        this.getView().getModel().refresh(); 
+                        this.onSearch(); 
+                    }
                 },
-                error: () => { 
+                error: (oError) => { 
                     this.getView().setBusy(false); 
-                    MessageBox.error("Save Error."); 
+                    let aMsgs = this._parseODataError(oError);
+                    let sErrorText = aMsgs.map(e => "• " + e.message).join("\n");
+                    MessageBox.error("Save Failed:\n\n" + (sErrorText || "A network or backend error occurred.")); 
                 }
             });
         },
@@ -786,13 +830,28 @@ sap.ui.define([
                 return;
             }
 
+            let sVendor = "";
+            const aVendorTokens = this.byId("inpVendor").getTokens();
+            if (aVendorTokens.length > 0) {
+                sVendor = aVendorTokens[0].getKey(); 
+            }
+
+            if (!sVendor) {
+                MessageBox.warning("A Vendor is required to convert a PR to a PO. Please add a Vendor to the top filter bar.");
+                return; 
+            }
+
             const aSelectedPRs = aSelectedContexts.map(oContext => oContext.getObject());
             const oOData = this.getOwnerComponent().getModel();
             
             oOData.setUseBatch(true);
             oOData.setDeferredGroups(["convertGrp"]);
 
+            const oDateFmt = sap.ui.core.format.DateFormat.getDateInstance({pattern: "yyyyMMdd"});
+
             aSelectedPRs.forEach(pr => {
+                let sFormattedDate = pr.AvailDate ? oDateFmt.format(pr.AvailDate) : "";
+
                 const payload = { 
                     Material: pr.Material, 
                     Plant: pr.Plant, 
@@ -802,7 +861,9 @@ sap.ui.define([
                     PurchaseReq: pr.DocNumber, 
                     LineItem: pr.DocItem, 
                     ReqQuantity: pr.Quantity.toString(),
+                    Vendor: sVendor,
                     AvailDate: pr.AvailDate,
+                    WeekNo: sFormattedDate,  
                     IsConvert: true 
                 };
                 
@@ -813,28 +874,155 @@ sap.ui.define([
             
             oOData.submitChanges({
                 groupId: "convertGrp",
-                success: () => { 
+                success: (oData) => { 
                     this.getView().setBusy(false); 
-                    MessageToast.show("Processing successful!"); 
                     
-                    const oTableToClear = this.byId("idDocDetailsTable");
-                    if (oTableToClear) {
-                        oTableToClear.removeSelections(true);
+                    let aMsgs = this._extractBatchErrors(oData, aSelectedPRs);
+                    let aErrors = aMsgs.filter(m => m.type === "error" || m.type === "E");
+                    let aWarnings = aMsgs.filter(m => m.type !== "error" && m.type !== "E");
+
+                    if (aErrors.length > 0) {
+                        let sErrorText = aErrors.map(e => "• " + e.message).join("\n");
+                        MessageBox.error("Conversion completed with backend errors:\n\n" + sErrorText);
+                    } else if (aWarnings.length > 0) {
+                        let sWarningText = aWarnings.map(w => "• " + w.message).join("\n");
+                        MessageBox.warning("Converted with warnings/info:\n\n" + sWarningText);
+                        
+                        const oTableToClear = this.byId("idDocDetailsTable");
+                        if (oTableToClear) oTableToClear.removeSelections(true);
+                        this.onCloseDocFragment(); 
+                        this._aChangeLog = []; 
+                        this.getView().getModel().refresh(); 
+                        this.onSearch(); 
+                    } else {
+                        MessageToast.show("Conversion successful!"); 
+                        
+                        const oTableToClear = this.byId("idDocDetailsTable");
+                        if (oTableToClear) oTableToClear.removeSelections(true);
+                        
+                        this.onCloseDocFragment(); 
+                        this._aChangeLog = []; 
+                        this.getView().getModel().refresh(); 
+                        this.onSearch(); 
                     }
-                    
-                    this.onCloseDocFragment(); 
-                    this._aChangeLog = []; 
-                    
-                    this.getView().getModel().refresh(); 
-                    this.onSearch(); 
                 },
-                error: () => { 
+                error: (oError) => { 
                     this.getView().setBusy(false); 
-                    MessageBox.error("Processing failed."); 
+                    let aMsgs = this._parseODataError(oError);
+                    let sErrorText = aMsgs.map(e => "• " + e.message).join("\n");
+                    MessageBox.error("Conversion Failed:\n\n" + (sErrorText || "A network or backend error occurred.")); 
                 }
             });
         },
 
-        onCloseFragment() { if (this._oDetailDialog) this._oDetailDialog.close(); }
+        onCloseFragment() { if (this._oDetailDialog) this._oDetailDialog.close(); },
+
+        // =========================================================
+        // MANUAL ODATA BATCH PARSERS & FORMATTERS
+        // =========================================================
+        
+        _showAllMessages: function(aMsgs, sTitle) {
+            let bHasError = aMsgs.some(m => m.type === "error" || m.type === "E");
+
+            let sMessageText = aMsgs.map(m => {
+                let type = (m.type || "").toLowerCase();
+                let sPrefix = "ℹ️ ";
+                if (type === "error" || type === "e") sPrefix = "❌ ";
+                else if (type === "warning" || type === "w") sPrefix = "⚠️ ";
+                else if (type === "success" || type === "s") sPrefix = "✅ ";
+                return sPrefix + m.message;
+            }).join("\n\n");
+
+            if (bHasError) {
+                MessageBox.error(sTitle + ":\n\n" + sMessageText);
+            } else {
+                MessageBox.information(sTitle + ":\n\n" + sMessageText);
+            }
+        },
+
+        _extractBatchErrors: function(oData, aContextArray) {
+            let aMsgs = [];
+            let iChangeIndex = 0; 
+
+            if (oData && oData.__batchResponses) {
+                oData.__batchResponses.forEach(res => {
+                    
+                    if (res.response && res.response.statusCode >= 400) {
+                        try {
+                            let oBody = JSON.parse(res.response.body);
+                            if (oBody.error && oBody.error.innererror && oBody.error.innererror.errordetails) {
+                                oBody.error.innererror.errordetails.forEach(err => {
+                                    if (err.code !== "/IWBEP/CX_MGW_BUSI_EXCEPTION" && err.code !== "") {
+                                        aMsgs.push({ type: err.severity, message: err.message });
+                                    }
+                                });
+                            } else if (oBody.error && oBody.error.message) {
+                                aMsgs.push({ type: "error", message: oBody.error.message.value });
+                            }
+                        } catch (e) {
+                            aMsgs.push({ type: "error", message: res.message || "Unknown batch error." });
+                        }
+                    }
+                    
+                    if (res.headers && res.headers["sap-message"]) {
+                        this._parseSapMessageHeader(res.headers["sap-message"], aMsgs, "");
+                    }
+
+                    if (res.__changeResponses) {
+                        res.__changeResponses.forEach(changeRes => {
+                            let oContext = (aContextArray && aContextArray[iChangeIndex]) ? aContextArray[iChangeIndex] : {};
+                            let sPrefix = "";
+                            
+                            if (oContext.DocNumber) { 
+                                sPrefix = `[PR ${oContext.DocNumber}]: `;
+                            } else if (oContext.PurchaseReq) {
+                                sPrefix = `[PR ${oContext.PurchaseReq}]: `;
+                            } else if (oContext.Material) { 
+                                sPrefix = `[Mat ${oContext.Material} - ${oContext.PeriodBucket || oContext.Plant}]: `;
+                            }
+
+                            if (changeRes.headers && changeRes.headers["sap-message"]) {
+                                this._parseSapMessageHeader(changeRes.headers["sap-message"], aMsgs, sPrefix);
+                            }
+                            
+                            iChangeIndex++;
+                        });
+                    }
+                });
+            }
+            return aMsgs;
+        },
+
+        _parseSapMessageHeader: function(sSapMessage, aMsgs, sPrefix) {
+            try {
+                let oSapMsg = JSON.parse(sSapMessage);
+                sPrefix = sPrefix || "";
+                aMsgs.push({ type: oSapMsg.severity, message: sPrefix + oSapMsg.message });
+                if (oSapMsg.details) {
+                    oSapMsg.details.forEach(d => {
+                        aMsgs.push({ type: d.severity, message: sPrefix + d.message });
+                    });
+                }
+            } catch(e) {}
+        },
+
+        _parseODataError: function (oError) {
+            let aMsgs = [];
+            try {
+                let oResponse = JSON.parse(oError.responseText);
+                if (oResponse.error && oResponse.error.innererror && oResponse.error.innererror.errordetails) {
+                    oResponse.error.innererror.errordetails.forEach(err => {
+                        if (err.code !== "/IWBEP/CX_MGW_BUSI_EXCEPTION" && err.code !== "") {
+                            aMsgs.push({ type: err.severity, message: err.message });
+                        }
+                    });
+                } else if (oResponse.error && oResponse.error.message) {
+                    aMsgs.push({ type: "error", message: oResponse.error.message.value });
+                }
+            } catch (e) {
+                aMsgs.push({ type: "error", message: oError.message || "Unknown error." });
+            }
+            return aMsgs;
+        }
     });
 });
