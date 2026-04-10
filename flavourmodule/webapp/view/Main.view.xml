@@ -115,15 +115,18 @@
                         </table:template>
                     </table:Column>
 
-                    <table:Column width="55px">
-                        <Label text="Plant" design="Bold"/>
-                        <table:template><Text text="{Plant}" wrapping="false"/></table:template>
-                    </table:Column>
+
                     
                     <table:Column width="278px">
                         <Label text="Prod Version" design="Bold"/>
                         <table:template><Text text="{ProdVersion}" wrapping="false"/></table:template>
                     </table:Column>
+
+                    <table:Column width="55px">
+                        <Label text="Plant" design="Bold"/>
+                        <table:template><Text text="{Plant}" wrapping="false"/></table:template>
+                    </table:Column>
+                    
                 </table:columns>
             </table:TreeTable>
         </f:content>
