@@ -2,7 +2,7 @@
     xmlns="sap.m"
     xmlns:core="sap.ui.core">
     
-    <Popover title="{localModel>/PopoverConfig/Title}" contentWidth="800px" placement="Auto">
+    <Popover title="{localModel>/PopoverConfig/Title}" contentWidth="850px" placement="Auto">
         <content>
             <Table id="idDocDetailsTable" 
                    mode="MultiSelect" 
@@ -15,6 +15,7 @@
                     <Column><Text text="Line Item"/></Column>
                     <Column><Text text="Material"/></Column>
                     <Column><Text text="Quantity"/></Column>
+                    <Column><Text text="UOM"/></Column> 
                 </columns>
                 <items>
                     <ColumnListItem>
@@ -26,6 +27,7 @@
                             <Text text="{localModel>DocItem}"/>
                             <Text text="{localModel>Material}"/>
                             <Text text="{localModel>Quantity}"/>
+                            <Text text="{localModel>UoM}"/>
                         </cells>
                     </ColumnListItem>
                 </items>

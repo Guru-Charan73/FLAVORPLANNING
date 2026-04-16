@@ -239,7 +239,8 @@ sap.ui.define([
                     nodes: [
                         { Category: "", MRPElement: "Planned Independent Req.", BackendCategory: "1", BackendMRPElement: "IndReq", ...oEmptyWeeks, nodes: [] },
                         { Category: "", MRPElement: "Sales Order", BackendCategory: "1", BackendMRPElement: "SalesOrders", ...oEmptyWeeks, nodes: [] },
-                        { Category: "", MRPElement: "Dependent Requirement", BackendCategory: "1", BackendMRPElement: "DepReq", ...oEmptyWeeks, nodes: [] }
+                        { Category: "", MRPElement: "Dependent Requirement", BackendCategory: "1", BackendMRPElement: "DepReq", ...oEmptyWeeks, nodes: [] },
+                        { Category: "", MRPElement: "Transfer Requirement Line", BackendCategory: "1", BackendMRPElement: "TransferRequirement", ...oEmptyWeeks, nodes: []}
                     ]
                 },
                 {
@@ -700,14 +701,26 @@ sap.ui.define([
                         Col1Value: aParts[1] ? aParts.slice(1).join(" / ").trim() : (row.ProdVerText || ""), 
                         DocNumber: row.PurchaseReq, DocItem: row.LineItem, Material: row.Material, 
                         Plant: oRowData.Plant, BackendCategory: oRowData.BackendCategory, BackendMRPElement: "PurRqs", 
-                        Description: row.MaterialDesc, Quantity: row.ReqQuantity, AvailDate: row.AvailDate
+                        Description: row.MaterialDesc, Quantity: row.ReqQuantity, AvailDate: row.AvailDate,
+                        
+                        // NEW UOM FIELD ADDED ON 16/04/2026
+                        UoM: row.BaseUnit
                     };
                 });
             } else if (oRowData.BackendMRPElement === "PurOrd") {  
                 sConfig = { Title: "Purchase Order Details", Col1Label: "Prod Ver Txt", DocColLabel: "Purchase Order" };
                 aMappedItems = aRawBackendData.filter(row => row.Material === oRowData.Material && row.ProdVersion === oRowData.ProdVersion && row.MRPElement === "PurOrd" && Number(row[sWeek]) > 0).map(row => {
                     let aParts = (row.ProdVersion || "").split(" / ");
-                    return { Category: "Supply", MRPElementText: "Purchase Order", ProdVersion: aParts[0] ? aParts[0].trim() : "", Col1Value: aParts[1] ? aParts.slice(1).join(" / ").trim() : (row.ProdVerText || ""), DocNumber: row.PurchaseReq, DocItem: row.LineItem, Material: row.Material, Plant: oRowData.Plant, BackendCategory: oRowData.BackendCategory, BackendMRPElement: "PurOrd", Description: row.MaterialDesc, Quantity: row.ReqQuantity, AvailDate: row.AvailDate };
+                    return { 
+                        Category: "Supply", MRPElementText: "Purchase Order", ProdVersion: aParts[0] ? aParts[0].trim() : "", 
+                        Col1Value: aParts[1] ? aParts.slice(1).join(" / ").trim() : (row.ProdVerText || ""), 
+                        DocNumber: row.PurchaseReq, DocItem: row.LineItem, Material: row.Material, 
+                        Plant: oRowData.Plant, BackendCategory: oRowData.BackendCategory, BackendMRPElement: "PurOrd", 
+                        Description: row.MaterialDesc, Quantity: row.ReqQuantity, AvailDate: row.AvailDate,
+                        
+                        // NEW UOM FIELD ADDED ON 16/04/2026
+                        UoM: row.BaseUnit
+                    };
                 });
             }
 
@@ -1065,4 +1078,3 @@ sap.ui.define([
 
     });
 });
-
