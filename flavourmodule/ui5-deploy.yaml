@@ -20,6 +20,6 @@ builder:
           name: Z_ESP_FLVPLAN
           description: FIORI APPLICATION FOR FLAVOR PLANNING
           package: Z_ESPERION_MM
-          transport: DS4K900608
+          transport: DS4K900689
         exclude:
           - /test/
