@@ -19,8 +19,9 @@ sap.ui.define([
     "sap/ui/comp/valuehelpdialog/ValueHelpDialog",
     "sap/ui/model/type/String",
     "sap/ui/model/type/Float",
-    "sap/ui/core/Item"
-], (Controller, JSONModel, MessageToast, MessageBox, Input, Label, Column, CustomData, DateFormat, VBox, HBox, ObjectStatus, ObjectNumber, Fragment, Token, Filter, FilterOperator, ValueHelpDialog, TypeString, TypeFloat, CoreItem) => {
+    "sap/m/VariantItem",
+    "sap/m/Title"
+], (Controller, JSONModel, MessageToast, MessageBox, Input, Label, Column, CustomData, DateFormat, VBox, HBox, ObjectStatus, ObjectNumber, Fragment, Token, Filter, FilterOperator, ValueHelpDialog, TypeString, TypeFloat, VariantItem, Title) => {
     "use strict";
 
     return Controller.extend("flavournamespace.flavourmodule.controller.Main", {
@@ -41,7 +42,8 @@ sap.ui.define([
                 PopoverConfig: {},  
                 SelectedItems: [],  
                 TimeBuckets: [],
-                SavedVariants: []   
+                SavedVariants: [],
+                GlobalUoM: ""
             });
             this.getView().setModel(oLocalModel, "localModel");
 
@@ -62,54 +64,84 @@ sap.ui.define([
                 return new Token({ key: sKey, text: sText });
             };
 
-            ["inpPlant", "inpMaterial", "inpVendor"].forEach(id => {
+            // ⭐ THE MD04 FIX: Restrict Material to ONLY ONE Input
+           // ⭐ THE MD04 FIX: Restrict Material to ONLY ONE Input with User Feedback
+            const oMatInput = this.byId("inpMaterial");
+            if (oMatInput) {
+                oMatInput.addValidator(args => {
+                    let sText = args.text.toUpperCase(); 
+                    let sKey = sText.startsWith("=") ? sText.substring(1) : sText;
+                    
+                    // Check if they already have a material selected
+                    if (oMatInput.getTokens().length >= 1) {
+                        MessageBox.information("You can only evaluate one Material at a time. Please remove the current Material before adding a new one.");
+                        return null; // Reject the new token
+                    }
+                    
+                    return new Token({ key: sKey, text: sText });
+                });
+                oMatInput.attachLiveChange(oEvent => {
+                    let sValue = oEvent.getParameter("value");
+                    if (sValue !== sValue.toUpperCase()) oEvent.getSource().setValue(sValue.toUpperCase());
+                });
+            }
+
+            // Plant and Vendor can remain Multi-Inputs
+            ["inpPlant", "inpVendor"].forEach(id => {
                 const oInput = this.byId(id);
                 if (oInput) {
                     oInput.addValidator(fnTokenValidator);
-                    oInput.attachLiveChange(function(oEvent) {
+                    oInput.attachLiveChange(oEvent => {
                         let sValue = oEvent.getParameter("value");
-                        if (sValue !== sValue.toUpperCase()) {
-                            oEvent.getSource().setValue(sValue.toUpperCase()); 
-                        }
+                        if (sValue !== sValue.toUpperCase()) oEvent.getSource().setValue(sValue.toUpperCase());
                     });
                 }
             });
 
-            this._loadVariants();
+            this._sContainerId = "Z_FLAVOR_PLAN_VARIANTS"; 
+            
+            if (sap.ushell && sap.ushell.Container) {
+                sap.ushell.Container.getServiceAsync("Personalization").then(oService => {
+                    const oScope = {
+                        keyCategory: oService.constants.keyCategory.FIXED_KEY,
+                        writeFrequency: oService.constants.writeFrequency.LOW,
+                        clientStorageAllowed: true
+                    };
+                    oService.getContainer(this._sContainerId, oScope).then(oContainer => {
+                        this._oVariantContainer = oContainer;
+                        this._loadVariantsIntoUI();
+                    });
+                }).catch(() => { this._initLocalStorageFallback(); });
+            } else {
+                this._initLocalStorageFallback(); 
+            }
         },
 
         // =========================================================
-        // 2. VARIANT MANAGEMENT (Saving UI State via Data Binding)
+        // 2. VARIANT MANAGEMENT
         // =========================================================
-        _loadVariants() {
-            const sData = localStorage.getItem("flavorVariants"); 
-            this._aCustomVariants = sData ? JSON.parse(sData) : [];
+        _loadVariantsIntoUI() {
+            const aKeys = this._oVariantContainer.getItemKeys();
+            this._aCustomVariants = [];
+            let sDefKey = null;
+
+            aKeys.forEach(sKey => {
+                if (sKey === "DEFAULT_VARIANT_KEY") {
+                    sDefKey = this._oVariantContainer.getItemValue(sKey);
+                } else {
+                    const oVal = this._oVariantContainer.getItemValue(sKey);
+                    if (oVal) { this._aCustomVariants.push(oVal); }
+                }
+            });
 
             this.getView().getModel("localModel").setProperty("/SavedVariants", this._aCustomVariants);
             
-            sap.ui.require(["sap/ui/comp/variants/VariantItem"], (VariantItem) => {
-                const oVM = this.byId("idVariantManagement");
-                
-                if (oVM) {
-                    if (!oVM.getBindingInfo("variantItems")) {
-                        oVM.bindAggregation("variantItems", {
-                            path: "localModel>/SavedVariants",
-                            template: new VariantItem({
-                                key: "{localModel>key}",
-                                text: "{localModel>name}",
-                                author: "Local User"
-                            })
-                        });
-                    }
-
-                    const sDef = localStorage.getItem("flavorDefVariant");
-                    if (sDef) {
-                        oVM.setDefaultVariantKey(sDef);
-                        oVM.setInitialSelectionKey(sDef);
-                        setTimeout(() => this._applyVariant(sDef), 300); 
-                    }
-                }
-            });
+            const oVM = this.byId("idVariantManagement");
+            if (sDefKey && oVM) {
+                oVM.setDefaultKey(sDefKey); 
+                oVM.setSelectedKey(sDefKey); 
+                setTimeout(() => this._applyVariant(sDefKey), 300); 
+            }
         },
 
         onSaveVariant(oEvent) {
@@ -119,33 +151,39 @@ sap.ui.define([
             let sKey = oEvent.getParameter("key");
 
             const fnGetTokens = (id) => this.byId(id).getTokens().map(t => ({ key: t.getKey(), text: t.getText(), range: t.data("range") }));
+            const oDR = this.byId("inpDateRange");
 
             const oState = {
                 material: fnGetTokens("inpMaterial"),
                 plant: fnGetTokens("inpPlant"),
                 vendor: fnGetTokens("inpVendor"),
-                dateStart: this.byId("inpDateRange").getDateValue(),
-                dateEnd: this.byId("inpDateRange").getSecondDateValue(),
+                dateStart: oDR.getDateValue() ? oDR.getDateValue().getTime() : null,
+                dateEnd: oDR.getSecondDateValue() ? oDR.getSecondDateValue().getTime() : null,
                 period: this.byId("inpPeriod").getSelectedKey()
             };
 
-            if (bOverwrite) {
-                const oVar = this._aCustomVariants.find(v => v.key === sKey);
-                if (oVar) oVar.state = oState;
+            if (!bOverwrite || !sKey) { sKey = "VAR_" + Date.now(); }
+
+            const oVariantRecord = { key: sKey, name: sName, state: oState };
+
+            if (this._oVariantContainer) {
+                this._oVariantContainer.setItemValue(sKey, oVariantRecord);
+                if (bDefault) {
+                    this.byId("idVariantManagement").setDefaultKey(sKey);
+                    this._oVariantContainer.setItemValue("DEFAULT_VARIANT_KEY", sKey);
+                }
+                this._oVariantContainer.save().then(() => {
+                    MessageToast.show("Variant saved successfully to Fiori Launchpad.");
+                    this._loadVariantsIntoUI(); 
+                }).catch(() => { MessageBox.error("Failed to save variant to Fiori Launchpad."); });
             } else {
-                sKey = "var_" + Date.now(); 
-                this._aCustomVariants.push({ key: sKey, name: sName, state: oState });
+                const oExisting = this._aCustomVariants.find(v => v.key === sKey);
+                if (oExisting) oExisting.state = oState; else this._aCustomVariants.push(oVariantRecord);
+                if (bDefault) { this.byId("idVariantManagement").setDefaultKey(sKey); localStorage.setItem("flavorDefVariant", sKey); }
+                this.getView().getModel("localModel").setProperty("/SavedVariants", this._aCustomVariants);
+                localStorage.setItem("flavorVariants", JSON.stringify(this._aCustomVariants));
+                MessageToast.show("Variant saved locally.");
             }
-
-            this.getView().getModel("localModel").setProperty("/SavedVariants", this._aCustomVariants);
-
-            if (bDefault) {
-                this.byId("idVariantManagement").setDefaultVariantKey(sKey);
-                localStorage.setItem("flavorDefVariant", sKey);
-            }
-
-            localStorage.setItem("flavorVariants", JSON.stringify(this._aCustomVariants));
-            MessageToast.show("Variant saved successfully.");
         },
 
         onSelectVariant(oEvent) {
@@ -154,7 +192,7 @@ sap.ui.define([
         },
 
         _applyVariant(sKey) {
-            if (sKey === "*standard*") {
+            if (sKey === "*standard*" || !sKey) {
                 this.byId("inpMaterial").removeAllTokens();
                 this.byId("inpPlant").removeAllTokens();
                 this.byId("inpVendor").removeAllTokens();
@@ -164,7 +202,7 @@ sap.ui.define([
             }
 
             const oVariant = this._aCustomVariants.find(v => v.key === sKey);
-            if (oVariant) {
+            if (oVariant && oVariant.state) {
                 const fnSetTokens = (id, aToks) => {
                     const oInp = this.byId(id);
                     oInp.removeAllTokens();
@@ -194,24 +232,89 @@ sap.ui.define([
             const aRenamed = oEvent.getParameter("renamed") || [];
             const sDef = oEvent.getParameter("def");
 
-            aDeleted.forEach(sDelKey => {
-                this._aCustomVariants = this._aCustomVariants.filter(v => v.key !== sDelKey);
-                if (localStorage.getItem("flavorDefVariant") === sDelKey) {
-                    localStorage.removeItem("flavorDefVariant"); 
+            if (this._oVariantContainer) {
+                aDeleted.forEach(sDelKey => {
+                    this._oVariantContainer.delItem(sDelKey);
+                    if (this._oVariantContainer.getItemValue("DEFAULT_VARIANT_KEY") === sDelKey) {
+                        this._oVariantContainer.delItem("DEFAULT_VARIANT_KEY");
+                    }
+                });
+
+                aRenamed.forEach(oRename => {
+                    const oVar = this._oVariantContainer.getItemValue(oRename.key);
+                    if (oVar) {
+                        oVar.name = oRename.name;
+                        this._oVariantContainer.setItemValue(oRename.key, oVar);
+                    }
+                });
+
+                if (sDef !== undefined) {
+                    if (sDef === "*standard*") this._oVariantContainer.delItem("DEFAULT_VARIANT_KEY");
+                    else this._oVariantContainer.setItemValue("DEFAULT_VARIANT_KEY", sDef);
                 }
-            });
 
-            aRenamed.forEach(oRename => {
-                const oVar = this._aCustomVariants.find(v => v.key === oRename.key);
-                if (oVar) oVar.name = oRename.name;
-            });
+                this._oVariantContainer.save().then(() => { this._loadVariantsIntoUI(); });
 
-            if (sDef !== undefined) {
-                localStorage.setItem("flavorDefVariant", sDef);
+            } else {
+                aDeleted.forEach(sDelKey => {
+                    this._aCustomVariants = this._aCustomVariants.filter(v => v.key !== sDelKey);
+                    if (localStorage.getItem("flavorDefVariant") === sDelKey) localStorage.removeItem("flavorDefVariant"); 
+                });
+                aRenamed.forEach(oRename => {
+                    const oVar = this._aCustomVariants.find(v => v.key === oRename.key);
+                    if (oVar) oVar.name = oRename.name;
+                });
+                if (sDef !== undefined) localStorage.setItem("flavorDefVariant", sDef);
+                this.getView().getModel("localModel").setProperty("/SavedVariants", this._aCustomVariants);
+                localStorage.setItem("flavorVariants", JSON.stringify(this._aCustomVariants));
+            }
+        },
+
+        _initLocalStorageFallback() {
+            const sData = localStorage.getItem("flavorVariants"); 
+            this._aCustomVariants = sData ? JSON.parse(sData) : [];
+            this.getView().getModel("localModel").setProperty("/SavedVariants", this._aCustomVariants);
+            const oVM = this.byId("idVariantManagement");
+            const sDef = localStorage.getItem("flavorDefVariant");
+            if (sDef && oVM) {
+                oVM.setDefaultKey(sDef); 
+                oVM.setSelectedKey(sDef); 
+                setTimeout(() => this._applyVariant(sDef), 300); 
+            }
+        },
+
+        // =========================================================
+        // ⭐ STRICT BUCKET BOUNDARY ALIGNMENT
+        // =========================================================
+        _getAdjustedDates() {
+            const oDR = this.byId("inpDateRange");
+            const sPer = this.byId("inpPeriod").getSelectedKey();
+            if (!oDR || !oDR.getDateValue()) return null;
+
+            let dStart = new Date(oDR.getDateValue().getTime());
+            let dEnd = new Date(oDR.getSecondDateValue().getTime());
+
+            if (sPer === "W") {
+                const iDayStart = dStart.getDay(); 
+                const iDiffStart = dStart.getDate() - iDayStart + (iDayStart === 0 ? -6 : 1);
+                dStart = new Date(dStart.setDate(iDiffStart));
+
+                const iDayEnd = dEnd.getDay();
+                const iDiffEnd = dEnd.getDate() - iDayEnd + (iDayEnd === 0 ? 0 : 7);
+                dEnd = new Date(dEnd.setDate(iDiffEnd));
+
+            } else if (sPer === "M") {
+                dStart = new Date(dStart.getFullYear(), dStart.getMonth(), 1);
+                dEnd = new Date(dEnd.getFullYear(), dEnd.getMonth() + 1, 0);
+
+            } else if (sPer === "Q") {
+                const qStartMonth = Math.floor(dStart.getMonth() / 3) * 3;
+                dStart = new Date(dStart.getFullYear(), qStartMonth, 1);
+                const qEndMonth = Math.floor(dEnd.getMonth() / 3) * 3 + 2;
+                dEnd = new Date(dEnd.getFullYear(), qEndMonth + 1, 0);
             }
 
-            this.getView().getModel("localModel").setProperty("/SavedVariants", this._aCustomVariants);
-            localStorage.setItem("flavorVariants", JSON.stringify(this._aCustomVariants));
+            return { startDate: dStart, endDate: dEnd, period: sPer };
         },
 
         // =========================================================
@@ -219,7 +322,10 @@ sap.ui.define([
         // =========================================================
         _getEmptySkeleton() {
             const oEmptyWeeks = {};
-            for (let i = 1; i <= 54; i++) { oEmptyWeeks["W" + i] = 0; }
+            for (let i = 1; i <= 54; i++) { 
+                oEmptyWeeks["W" + i] = 0; 
+                oEmptyWeeks["W" + i + "_state"] = "None";
+            }
 
             return [
                 {
@@ -240,7 +346,7 @@ sap.ui.define([
                     ]
                 },
                 {
-                    Category: "INVENTORY", MRPElement: "", BackendCategory: "3", BackendMRPElement: "XX", ...oEmptyWeeks, nodes: [] 
+                    Category: "INVENTORY", MRPElement: "Stock Balance", BackendCategory: "3", BackendMRPElement: "Stock Balance", ...oEmptyWeeks, nodes: [] 
                 }
             ];
         },
@@ -262,7 +368,6 @@ sap.ui.define([
 
                 aTree.forEach(oParent => {
                     if (oParent.Category === "INVENTORY" && sCat === "3") {
-                        
                         let sCacheKey = `INV_${sPlant}_${sVer}_${sMat}`;
                         let oLeaf = oLookupCache[sCacheKey];
                         
@@ -277,6 +382,7 @@ sap.ui.define([
                             };
                             for (let i = 1; i <= 54; i++) { 
                                 oLeaf["W" + i] = Number((Number(oRow["W" + i]) || 0).toFixed(3)); 
+                                oLeaf["W" + i + "_state"] = "None";
                             }
                             oParent.nodes.push(oLeaf); 
                             oLookupCache[sCacheKey] = oLeaf; 
@@ -303,6 +409,7 @@ sap.ui.define([
                                     };
                                     for (let i = 1; i <= 54; i++) { 
                                         oLeaf["W" + i] = Number((Number(oRow["W" + i]) || 0).toFixed(3)); 
+                                        oLeaf["W" + i + "_state"] = "None";
                                     }
                                     oChild.nodes.push(oLeaf);
                                     oLookupCache[sCacheKey] = oLeaf; 
@@ -379,16 +486,33 @@ sap.ui.define([
             return new Filter({ filters: aFilters, and: false });
         },
 
-        onMaterialVH(oEvent) { this._openAdvancedValueHelp(oEvent.getSource(), "Material", "Define Material Ranges"); },
-        onPlantVH(oEvent) { this._openAdvancedValueHelp(oEvent.getSource(), "Plant", "Define Plant Ranges"); },
-        onVendorVH(oEvent) { this._openAdvancedValueHelp(oEvent.getSource(), "Vendor", "Define Vendor Ranges"); },
+        // ⭐ THE MD04 FIX: Ensure Material is Single Select in the F4 Help
+        onMaterialVH(oEvent) { this._openAdvancedValueHelp(oEvent.getSource(), "Material", "Select Material", false); },
+        onPlantVH(oEvent) { this._openAdvancedValueHelp(oEvent.getSource(), "Plant", "Define Plant Ranges", true); },
+        onVendorVH(oEvent) { this._openAdvancedValueHelp(oEvent.getSource(), "Vendor", "Define Vendor Ranges", true); },
 
-        _openAdvancedValueHelp(oInput, sField, sTitle) {
+_openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
             const oValueHelpDialog = new ValueHelpDialog({
-                title: sTitle, supportMultiselect: true, supportRanges: true, supportRangesOnly: true, 
+                title: sTitle, 
+                supportMultiselect: bIsMultiSelect, 
+                
+                // ⭐ THE FIX: Always force these to TRUE so the "Define Conditions" panel opens
+                // instead of trying to look for a non-existent table!
+                supportRanges: true, 
+                supportRangesOnly: true, 
+                
                 key: sField, descriptionKey: sField,
                 ok: function(oControlEvent) {
-                    oInput.setTokens(oControlEvent.getParameter("tokens")); oValueHelpDialog.close();
+                    let aTokens = oControlEvent.getParameter("tokens");
+                    
+                    // ⭐ THE MD04 FIX: User Feedback for F4 Help
+                    if (!bIsMultiSelect && aTokens.length > 1) {
+                        MessageBox.information("MD04 Planning Rule:\n\nYou can only evaluate one Material at a time. Only your first selection has been applied.");
+                        aTokens = [aTokens[0]]; // Keep only the first one
+                    }
+                    
+                    oInput.setTokens(aTokens); 
+                    oValueHelpDialog.close();
                 },
                 cancel: function() { oValueHelpDialog.close(); },
                 afterClose: function() { oValueHelpDialog.destroy(); }
@@ -406,15 +530,16 @@ sap.ui.define([
             const aMatTokens = this.byId("inpMaterial").getTokens();
             const aPlantTokens = this.byId("inpPlant").getTokens();
             const aVendorTokens = this.byId("inpVendor").getTokens();
-            const oDR = this.byId("inpDateRange");
-            const sPer = this.byId("inpPeriod").getSelectedKey(); 
+            
+            const oAlignedDates = this._getAdjustedDates();
 
-            if (!oDR.getDateValue() || aPlantTokens.length === 0 || aMatTokens.length === 0) {
+            if (!oAlignedDates || aPlantTokens.length === 0 || aMatTokens.length === 0) {
                 return MessageBox.error("Mandatory fields missing: Plant, Material, and Horizon.");
             }
 
-            const dStartDate = oDR.getDateValue();
-            const dEndDate = oDR.getSecondDateValue();
+            const dStartDate = oAlignedDates.startDate;
+            const dEndDate   = oAlignedDates.endDate;
+            const sPer       = oAlignedDates.period;
 
             this.onGenerateColumns(this._generateTimeBuckets(dStartDate, dEndDate, sPer));
 
@@ -449,6 +574,20 @@ sap.ui.define([
                         } else {
                             this.getView().setBusy(false);
                             
+                            if (aAllResults.length === 0) {
+                                this.getView().getModel("localModel").setProperty("/RawData", []);
+                                this.getView().getModel("localModel").setProperty("/GlobalUoM", "");
+                                const aEmptyTree = this._getEmptySkeleton();
+                                this.getView().getModel().setProperty("/mrpData", aEmptyTree);
+                                this._oBackupModel.setProperty("/mrpData", JSON.parse(JSON.stringify(aEmptyTree)));
+                                return MessageBox.information("No data for selection criteria.");
+                            }
+
+                            let oRowWithUoM = aAllResults.find(r => r.BaseUnit && r.BaseUnit !== "");
+                            if (oRowWithUoM) {
+                                this.getView().getModel("localModel").setProperty("/GlobalUoM", oRowWithUoM.BaseUnit);
+                            }
+
                             this.getView().getModel("localModel").setProperty("/RawData", aAllResults);
                             const aResult = this._mapODataToSkeleton(aAllResults);
                             this.getView().getModel().setProperty("/mrpData", aResult);
@@ -514,7 +653,10 @@ sap.ui.define([
 
             aBuckets.forEach(oBuck => {
                 const oInp = new Input({
-                    value: { path: oBuck.key, type: oInputDecimalType }, textAlign: "End",
+                    value: { path: oBuck.key, type: oInputDecimalType }, 
+                    textAlign: "End",
+                    valueState: { path: oBuck.key + '_state', formatter: (s) => s ? s : "None" },
+                    valueStateText: "Unsaved Change",
                     visible: { 
                         parts: ['Category'], 
                         formatter: (category) => {
@@ -535,7 +677,60 @@ sap.ui.define([
                 }).addCustomData(new CustomData({ key: "weekProp", value: oBuck.key }))
                   .addCustomData(new CustomData({ key: "columnLabel", value: oBuck.label }));
 
-                oInp.addEventDelegate({ ondblclick: (e) => this.onCellDoubleClick(e.srcControl) });
+                // ⭐ BULLETPROOF HTML5 DRAG & DROP FIX ⭐
+                oInp.addEventDelegate({ 
+                    ondblclick: (e) => this.onCellDoubleClick(e.srcControl),
+                    onAfterRendering: () => {
+                        const dom = oInp.getDomRef();
+                        if (dom && oInp.getEditable()) {
+                            // Bind to the actual inner HTML input tag for stable dragging
+                            const innerInput = dom.querySelector("input") || dom;
+                            
+                            // Prevent ghost listeners when table re-renders on scroll
+                            if (!innerInput.hasAttribute("data-dnd-bound")) {
+                                innerInput.setAttribute("draggable", "true");
+                                innerInput.setAttribute("data-dnd-bound", "true");
+                                
+                                innerInput.addEventListener("dragstart", (e) => {
+                                    e.dataTransfer.setData("text/plain", oInp.getValue());
+                                    e.dataTransfer.effectAllowed = "move";
+                                    window._currentDragInput = oInp;
+                                });
+                                
+                                innerInput.addEventListener("dragover", (e) => {
+                                    if (oInp.getEditable()) {
+                                        e.preventDefault(); 
+                                        e.dataTransfer.dropEffect = "move";
+                                        innerInput.style.backgroundColor = "#e5f0fa"; // Highlight drop target blue
+                                    }
+                                });
+                                
+                                innerInput.addEventListener("dragleave", (e) => {
+                                    innerInput.style.backgroundColor = ""; // Remove blue highlight
+                                });
+                                
+                                innerInput.addEventListener("drop", (e) => {
+                                    e.preventDefault();
+                                    innerInput.style.backgroundColor = "";
+                                    
+                                    if (oInp.getEditable() && window._currentDragInput && window._currentDragInput !== oInp) {
+                                        const sVal = e.dataTransfer.getData("text/plain");
+                                        
+                                        // 1. Move value to new cell
+                                        oInp.setValue(sVal);
+                                        oInp.fireChange({ value: sVal }); 
+                                        
+                                        // 2. Clear old cell
+                                        window._currentDragInput.setValue("0");
+                                        window._currentDragInput.fireChange({ value: "0" });
+                                        
+                                        window._currentDragInput = null;
+                                    }
+                                });
+                            }
+                        }
+                    }
+                });
 
                 const oBoldTotals = new ObjectNumber({
                     number: { path: oBuck.key, type: oDisplayDecimalType }, emphasized: true, textAlign: "End",
@@ -581,24 +776,75 @@ sap.ui.define([
                 if (oBucketDef) { oStartDate = oBucketDef.startDate; oEndDate = oBucketDef.endDate; }
             }
 
-            let sMat = oRow.Material || (this.byId("inpMaterial").getTokens()[0] ? this.byId("inpMaterial").getTokens()[0].getKey() : "");
-            let sPlnt = oRow.Plant || (this.byId("inpPlant").getTokens()[0] ? this.byId("inpPlant").getTokens()[0].getKey() : "");
+            let sMat = (oRow.Material || (this.byId("inpMaterial").getTokens()[0] ? this.byId("inpMaterial").getTokens()[0].getKey() : "")).trim();
+            let sPlnt = (oRow.Plant || (this.byId("inpPlant").getTokens()[0] ? this.byId("inpPlant").getTokens()[0].getKey() : "")).trim();
+            let sMrpElem = (oRow.BackendMRPElement || "IndReq").trim();
+            let sProdVer = (oRow.ProdVersion || "").trim();
 
             let aMatches = [];
             if (aRawData) {
                 aMatches = aRawData.filter(r => 
-                    (r.Material || "").trim() === (oRow.Material || "").trim() && 
-                    (r.Plant || "").trim() === (oRow.Plant || "").trim() && 
-                    (r.ProdVersion || "").trim() === (oRow.ProdVersion || "").trim() && 
-                    (r.MRPElement || "").trim() === (oRow.BackendMRPElement || "").trim() &&
+                    (r.Material || "").trim() === sMat && 
+                    (r.Plant || "").trim() === sPlnt && 
+                    (r.ProdVersion || "").trim() === sProdVer && 
+                    (r.MRPElement || "").trim() === sMrpElem &&
                     Number(r[sWeek]) > 0 
                 );
             }
 
+            if (nVal !== nCellOldQty) {
+                let bIsGlobalDistribution = false;
+                let oEditedCells = new Set();
+                let sCurrentCellKey = `${sMat}_${sPlnt}_${sMrpElem}_${sProdVer}_${sWeek}`;
+                
+                if (nCellOldQty > 0 || aMatches.length > 0) {
+                    bIsGlobalDistribution = true;
+                }
+                
+                let aAllActiveChanges = this._aChangeLog.filter(c => Number(c.NewQuantity) !== Number(c.OldQuantity));
+
+                aAllActiveChanges.forEach(c => {
+                    let sKey = `${(c.Material||"").trim()}_${(c.Plant||"").trim()}_${(c.MRPElement||"").trim()}_${(c.ProdVersion||"").trim()}_${c.PeriodBucket}`;
+                    
+                    if (sKey !== sCurrentCellKey) {
+                        oEditedCells.add(sKey); 
+                        if (Number(c.OldQuantity) > 0 || (c.PurchaseReq && c.PurchaseReq !== "")) {
+                            bIsGlobalDistribution = true;
+                        }
+                    }
+                });
+
+                oEditedCells.add(sCurrentCellKey); 
+                let iTotalEditedCells = oEditedCells.size;
+
+                if (!bIsGlobalDistribution && iTotalEditedCells > 1) {
+                    oInp.setValue(nCellOldQty); 
+                    oMod.setProperty(sPath + "/" + sWeek, nCellOldQty); 
+                    oMod.setProperty(sPath + "/" + sWeek + "_state", "None"); 
+                    return MessageBox.warning("Information:\n\nYou are creating a new document. You can only modify 1 cell at a time.\n\nFirst save the highlighted (blue) cell before trying to make more changes.");
+                }
+
+                if (bIsGlobalDistribution && iTotalEditedCells > 2) {
+                    oInp.setValue(nCellOldQty); 
+                    oMod.setProperty(sPath + "/" + sWeek, nCellOldQty); 
+                    oMod.setProperty(sPath + "/" + sWeek + "_state", "None"); 
+                    return MessageBox.warning("Information:\n\nYou are moving an existing document. You can only modify a maximum of 2 cells at a time.\n\nFirst save the highlighted (blue) cells before making more changes.");
+                }
+            }
+
+            if (nVal !== nCellOldQty) {
+                oMod.setProperty(sPath + "/" + sWeek + "_state", "Information"); 
+            } else {
+                oMod.setProperty(sPath + "/" + sWeek + "_state", "None"); 
+            }
+
             const fnPushToLog = (oContext) => {
                 const idx = this._aChangeLog.findIndex(c => 
-                    c.Material === oContext.Material && c.Plant === oContext.Plant && c.ProdVersion === oContext.ProdVersion && 
-                    c.MRPElement === oContext.MRPElement && c.PeriodBucket === oContext.PeriodBucket && 
+                    (c.Material || "").trim() === (oContext.Material || "").trim() && 
+                    (c.Plant || "").trim() === (oContext.Plant || "").trim() && 
+                    (c.ProdVersion || "").trim() === (oContext.ProdVersion || "").trim() && 
+                    (c.MRPElement || "").trim() === (oContext.MRPElement || "").trim() && 
+                    c.PeriodBucket === oContext.PeriodBucket && 
                     c.PurchaseReq === oContext.PurchaseReq && c.LineItem === oContext.LineItem
                 );
                 if (idx !== -1) { this._aChangeLog[idx] = oContext; } else { this._aChangeLog.push(oContext); }
@@ -606,16 +852,16 @@ sap.ui.define([
 
             if (aMatches.length === 0) {
                 fnPushToLog({ 
-                    Material: sMat, Plant: sPlnt, Category: oRow.BackendCategory || "1", MRPElement: oRow.BackendMRPElement || "IndReq", 
-                    ProdVersion: oRow.ProdVersion || " ", PeriodBucket: sWeek, NewQuantity: nVal, OldQuantity: nCellOldQty, 
+                    Material: sMat, Plant: sPlnt, Category: oRow.BackendCategory || "1", MRPElement: sMrpElem, 
+                    ProdVersion: sProdVer, PeriodBucket: sWeek, NewQuantity: nVal, OldQuantity: nCellOldQty, 
                     PurchaseReq: "", LineItem: "", AvailDate: oStartDate, WkEndDate: oEndDate
                 });
             } else {
                 aMatches.forEach(oMatch => {
                     let nItemOldQty = Number(oMatch[sWeek]) || 0;
                     fnPushToLog({ 
-                        Material: sMat, Plant: sPlnt, Category: oRow.BackendCategory, MRPElement: oRow.BackendMRPElement, 
-                        ProdVersion: oRow.ProdVersion, PeriodBucket: sWeek, NewQuantity: nVal, OldQuantity: nItemOldQty, 
+                        Material: sMat, Plant: sPlnt, Category: oRow.BackendCategory, MRPElement: sMrpElem, 
+                        ProdVersion: sProdVer, PeriodBucket: sWeek, NewQuantity: nVal, OldQuantity: nItemOldQty, 
                         PurchaseReq: oMatch.PurchaseReq || "", LineItem: oMatch.LineItem || "", 
                         AvailDate: oStartDate, WkEndDate: oEndDate
                     });
@@ -745,7 +991,6 @@ sap.ui.define([
             const aSelectedPRs = aSelectedContexts.map(oContext => oContext.getObject());
             const oOData = this.getOwnerComponent().getModel();
             
-            // ⭐ RESTORED TO BATCH MODE: Required to trigger ABAP Changesets so execute_save breakpoint hits!
             oOData.setUseBatch(true); 
             oOData.setDeferredGroups(["convertGrp"]);
 
@@ -754,10 +999,10 @@ sap.ui.define([
                 return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
             };
 
-            const oDR = this.byId("inpDateRange");
-            const dGlobalStart = oDR.getDateValue();
-            const dGlobalEnd = oDR.getSecondDateValue();
-            const sPer = this.byId("inpPeriod").getSelectedKey();
+            const oAlignedDates = this._getAdjustedDates();
+            const dGlobalStart = oAlignedDates.startDate;
+            const dGlobalEnd   = oAlignedDates.endDate;
+            const sPer         = oAlignedDates.period;
 
             aSelectedPRs.forEach(pr => {
                 let sFormattedDate = pr.AvailDate ? sap.ui.core.format.DateFormat.getDateInstance({pattern: "yyyyMMdd"}).format(pr.AvailDate) : "";
@@ -766,7 +1011,6 @@ sap.ui.define([
                     Material: pr.Material, Plant: pr.Plant, Category: pr.BackendCategory || "2", MRPElement: pr.BackendMRPElement, 
                     ProdVersion: pr.ProdVersion ? pr.ProdVersion : " ", PurchaseReq: pr.DocNumber, 
                     LineItem: pr.DocItem, ReqQuantity: pr.Quantity.toString(), BaseUnit: pr.UoM || "",
-                    Vendor: pr.Vendor || "", // ⭐ FIX: Securely passes the PR's row-level vendor! No UI warning blocks here anymore!
                     AvailDate: fnToUTC(pr.AvailDate), GlobalStart: fnToUTC(dGlobalStart),
                     GlobalEnd: fnToUTC(dGlobalEnd), Period: sPer, WeekNo: sFormattedDate, IsConvert: true 
                 };
@@ -811,8 +1055,43 @@ sap.ui.define([
         },
 
         onSave() {
-            if (this._aChangeLog.length === 0) return MessageBox.information("No changes to save.");
+            const aActualChanges = this._aChangeLog.filter(c => Number(c.NewQuantity) !== Number(c.OldQuantity));
+
+            if (aActualChanges.length === 0) {
+                this._aChangeLog = []; 
+                return MessageBox.information("No changes to save.");
+            }
             
+            let bIsGlobalDistribution = false;
+            let oEditedCells = new Set();
+
+            aActualChanges.forEach(c => {
+                let sKey = `${(c.Material||"").trim()}_${(c.Plant||"").trim()}_${(c.MRPElement||"").trim()}_${(c.ProdVersion||"").trim()}_${c.PeriodBucket}`;
+                oEditedCells.add(sKey);
+
+                if (Number(c.OldQuantity) > 0 || (c.PurchaseReq && c.PurchaseReq !== "")) {
+                    bIsGlobalDistribution = true;
+                }
+            });
+
+            let iTotalEditedCells = oEditedCells.size;
+
+            if (!bIsGlobalDistribution && iTotalEditedCells > 1) {
+                return MessageBox.error(
+                    `Global Validation Failed:\n\n` +
+                    `You are creating a new document, but modified ${iTotalEditedCells} cells globally. You are only allowed to modify 1 cell at a time on this screen.\n\n` +
+                    `First save the highlighted (blue) cell before trying to make more changes.`
+                );
+            }
+
+            if (bIsGlobalDistribution && iTotalEditedCells > 2) {
+                return MessageBox.error(
+                    `Global Validation Failed:\n\n` +
+                    `You are moving existing documents, but modified ${iTotalEditedCells} cells globally. You can only modify a maximum of 2 cells at a time on this screen.\n\n` +
+                    `First save the highlighted (blue) cells before making more changes.`
+                );
+            }
+
             const oOData = this.getOwnerComponent().getModel();
             oOData.setUseBatch(true); 
             oOData.setDeferredGroups(["grp"]);
@@ -822,12 +1101,12 @@ sap.ui.define([
                 return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
             };
 
-            const oDR = this.byId("inpDateRange");
-            const dGlobalStart = oDR.getDateValue();
-            const dGlobalEnd = oDR.getSecondDateValue();
-            const sPer = this.byId("inpPeriod").getSelectedKey();
+            const oAlignedDates = this._getAdjustedDates();
+            const dGlobalStart = oAlignedDates.startDate;
+            const dGlobalEnd   = oAlignedDates.endDate;
+            const sPer         = oAlignedDates.period;
 
-            this._aChangeLog.forEach(c => {
+            aActualChanges.forEach(c => {
                 let sWeekNum = c.PeriodBucket.replace("W", "");
                 if (sWeekNum.length === 1) sWeekNum = "0" + sWeekNum; 
                 let sFormattedColNo = "COL" + sWeekNum;               
@@ -836,6 +1115,7 @@ sap.ui.define([
                     Material: c.Material, Plant: c.Plant, Category: c.Category, MRPElement: c.MRPElement, 
                     ProdVersion: c.ProdVersion ? c.ProdVersion : " ", PurchaseReq: c.PurchaseReq, LineItem: c.LineItem, 
                     AvailDate: fnToUTC(c.AvailDate), WkEndDate: fnToUTC(c.WkEndDate),
+                    
                     GlobalStart: fnToUTC(dGlobalStart), GlobalEnd: fnToUTC(dGlobalEnd),
                     Period: sPer, WeekNo: sFormattedColNo, WeekQty: c.NewQuantity.toString(), ReqQuantity: c.OldQuantity.toString()
                 };
@@ -851,7 +1131,7 @@ sap.ui.define([
                 success: (oData) => { 
                     this.getView().setBusy(false); 
                     
-                    let aMsgs = this._extractBatchErrors(oData, this._aChangeLog);
+                    let aMsgs = this._extractBatchErrors(oData, aActualChanges);
                     let bHasError = aMsgs.some(m => m.type === "error" || m.type === "E" || m.type === "error");
                     
                     this._showAllMessages(aMsgs, "Save Operation", () => {
@@ -951,7 +1231,7 @@ sap.ui.define([
                                     if (oBody.error && oBody.error.message) {
                                         let sErrMsg = oBody.error.message;
                                         if (typeof sErrMsg === "object" && sErrMsg.value) sErrMsg = sErrMsg.value;
-                                        if (sErrMsg) aMsgs.push({ type: "error", message: sPrefix + sErrMsg });
+                                        aMsgs.push({ type: "error", message: sPrefix + sErrMsg });
                                     }
                                 } catch(e) {}
                             }

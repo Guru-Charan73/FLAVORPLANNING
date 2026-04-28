@@ -18,14 +18,25 @@
         <f:title>
             <f:DynamicPageTitle>
                 <f:heading>
-                    <HBox alignItems="Center">
-                        <VariantManagement 
-                            id="idVariantManagement" 
-                            save=".onSaveVariant" 
-                            select=".onSelectVariant"
-                            manage=".onManageVariant" />
-                        <Title text="Flavor Planning" level="H1" class="sapUiSmallMarginBegin"/>
-                    </HBox>
+                  <HBox alignItems="Center">
+    <VariantManagement 
+        id="idVariantManagement" 
+        save=".onSaveVariant" 
+        select=".onSelectVariant"
+        manage=".onManageVariant"
+        items="{localModel>/SavedVariants}">
+        <items>
+            <VariantItem 
+                key="{localModel>key}" 
+                title="{localModel>name}" 
+                author="Local User" 
+                changeable="true" 
+                remove="true" />
+        </items>
+    </VariantManagement>
+    
+    <Title text="Flavor Planning" level="H1" class="sapUiSmallMarginBegin"/>
+</HBox>
                 </f:heading>
                 <f:actions>
                     <Button 
@@ -92,13 +103,19 @@
                 alternateRowColors="true" 
                 fixedColumnCount="4"> 
                 
-                <table:extension>
+<table:extension>
                     <OverflowToolbar style="Clear">
                         <ToolbarSpacer/>
+                        
+                        <HBox alignItems="Center" visible="{= !!${localModel>/GlobalUoM} }" class="sapUiMediumMarginEnd">
+                            <Label text="Base Unit:" design="Bold" class="sapUiTinyMarginEnd" />
+                            <ObjectStatus text="{localModel>/GlobalUoM}" state="Information" inverted="true" />
+                        </HBox>
+                            
                         <Button text="Save Changes" type="Emphasized" press=".onSave" icon="sap-icon://save"/>
                         <Button text="Refresh" press=".onRefresh" icon="sap-icon://refresh" type="Transparent"/>
                     </OverflowToolbar>
-                </table:extension> 
+                </table:extension>
 
                 <table:columns>
                     <table:Column width="125px">
