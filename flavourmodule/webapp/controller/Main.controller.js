@@ -64,18 +64,15 @@ sap.ui.define([
                 return new Token({ key: sKey, text: sText });
             };
 
-            // ⭐ THE MD04 FIX: Restrict Material to ONLY ONE Input
-           // ⭐ THE MD04 FIX: Restrict Material to ONLY ONE Input with User Feedback
             const oMatInput = this.byId("inpMaterial");
             if (oMatInput) {
                 oMatInput.addValidator(args => {
                     let sText = args.text.toUpperCase(); 
                     let sKey = sText.startsWith("=") ? sText.substring(1) : sText;
                     
-                    // Check if they already have a material selected
                     if (oMatInput.getTokens().length >= 1) {
                         MessageBox.information("You can only evaluate one Material at a time. Please remove the current Material before adding a new one.");
-                        return null; // Reject the new token
+                        return null; 
                     }
                     
                     return new Token({ key: sKey, text: sText });
@@ -86,7 +83,6 @@ sap.ui.define([
                 });
             }
 
-            // Plant and Vendor can remain Multi-Inputs
             ["inpPlant", "inpVendor"].forEach(id => {
                 const oInput = this.byId(id);
                 if (oInput) {
@@ -130,7 +126,10 @@ sap.ui.define([
                     sDefKey = this._oVariantContainer.getItemValue(sKey);
                 } else {
                     const oVal = this._oVariantContainer.getItemValue(sKey);
-                    if (oVal) { this._aCustomVariants.push(oVal); }
+                    if (oVal) { 
+                        if (!oVal.author) { oVal.author = "Legacy User"; }
+                        this._aCustomVariants.push(oVal); 
+                    }
                 }
             });
 
@@ -152,19 +151,29 @@ sap.ui.define([
 
             const fnGetTokens = (id) => this.byId(id).getTokens().map(t => ({ key: t.getKey(), text: t.getText(), range: t.data("range") }));
             const oDR = this.byId("inpDateRange");
+            
+            // TIMEZONE FIX
+            const oFmt = DateFormat.getDateInstance({pattern: "yyyy-MM-dd"});
 
             const oState = {
                 material: fnGetTokens("inpMaterial"),
                 plant: fnGetTokens("inpPlant"),
                 vendor: fnGetTokens("inpVendor"),
-                dateStart: oDR.getDateValue() ? oDR.getDateValue().getTime() : null,
-                dateEnd: oDR.getSecondDateValue() ? oDR.getSecondDateValue().getTime() : null,
+                // TIMEZONE FIX
+                dateStart: oDR.getDateValue() ? oFmt.format(oDR.getDateValue()) : null,
+                dateEnd: oDR.getSecondDateValue() ? oFmt.format(oDR.getSecondDateValue()) : null,
                 period: this.byId("inpPeriod").getSelectedKey()
             };
 
             if (!bOverwrite || !sKey) { sKey = "VAR_" + Date.now(); }
 
-            const oVariantRecord = { key: sKey, name: sName, state: oState };
+            let sAuthor = "Unknown User";
+            if (sap.ushell && sap.ushell.Container) {
+                let oUser = sap.ushell.Container.getUser();
+                sAuthor = oUser.getFullName() || oUser.getId() || "Standard User";
+            }
+
+            const oVariantRecord = { key: sKey, name: sName, state: oState, author: sAuthor };
 
             if (this._oVariantContainer) {
                 this._oVariantContainer.setItemValue(sKey, oVariantRecord);
@@ -178,7 +187,13 @@ sap.ui.define([
                 }).catch(() => { MessageBox.error("Failed to save variant to Fiori Launchpad."); });
             } else {
                 const oExisting = this._aCustomVariants.find(v => v.key === sKey);
-                if (oExisting) oExisting.state = oState; else this._aCustomVariants.push(oVariantRecord);
+                if (oExisting) {
+                    oExisting.state = oState; 
+                    oExisting.author = sAuthor;
+                } else {
+                    this._aCustomVariants.push(oVariantRecord);
+                }
+                
                 if (bDefault) { this.byId("idVariantManagement").setDefaultKey(sKey); localStorage.setItem("flavorDefVariant", sKey); }
                 this.getView().getModel("localModel").setProperty("/SavedVariants", this._aCustomVariants);
                 localStorage.setItem("flavorVariants", JSON.stringify(this._aCustomVariants));
@@ -219,8 +234,18 @@ sap.ui.define([
                 fnSetTokens("inpPlant", oVariant.state.plant);
                 fnSetTokens("inpVendor", oVariant.state.vendor);
                 
-                if (oVariant.state.dateStart) this.byId("inpDateRange").setDateValue(new Date(oVariant.state.dateStart));
-                if (oVariant.state.dateEnd) this.byId("inpDateRange").setSecondDateValue(new Date(oVariant.state.dateEnd));
+                // TIMEZONE FIX
+                const oDR = this.byId("inpDateRange");
+                const oFmt = DateFormat.getDateInstance({pattern: "yyyy-MM-dd"});
+
+                if (oVariant.state.dateStart) {
+                    if (typeof oVariant.state.dateStart === "number") oDR.setDateValue(new Date(oVariant.state.dateStart));
+                    else oDR.setDateValue(oFmt.parse(oVariant.state.dateStart));
+                }
+                if (oVariant.state.dateEnd) {
+                    if (typeof oVariant.state.dateEnd === "number") oDR.setSecondDateValue(new Date(oVariant.state.dateEnd));
+                    else oDR.setSecondDateValue(oFmt.parse(oVariant.state.dateEnd));
+                }
                 
                 this.byId("inpPeriod").setSelectedKey(oVariant.state.period || "W");
                 this.onSearch(); 
@@ -284,34 +309,38 @@ sap.ui.define([
         },
 
         // =========================================================
-        // ⭐ STRICT BUCKET BOUNDARY ALIGNMENT
+        // ⭐ STRICT BUCKET BOUNDARY ALIGNMENT (TIMEZONE FIXED)
         // =========================================================
         _getAdjustedDates() {
             const oDR = this.byId("inpDateRange");
             const sPer = this.byId("inpPeriod").getSelectedKey();
             if (!oDR || !oDR.getDateValue()) return null;
 
-            let dStart = new Date(oDR.getDateValue().getTime());
-            let dEnd = new Date(oDR.getSecondDateValue().getTime());
+            // TIMEZONE FIX
+            let dVal = oDR.getDateValue();
+            let dEndVal = oDR.getSecondDateValue();
+
+            let dStart = new Date(Date.UTC(dVal.getFullYear(), dVal.getMonth(), dVal.getDate()));
+            let dEnd = new Date(Date.UTC(dEndVal.getFullYear(), dEndVal.getMonth(), dEndVal.getDate()));
 
             if (sPer === "W") {
-                const iDayStart = dStart.getDay(); 
-                const iDiffStart = dStart.getDate() - iDayStart + (iDayStart === 0 ? -6 : 1);
-                dStart = new Date(dStart.setDate(iDiffStart));
+                const iDayStart = dStart.getUTCDay(); 
+                const iDiffStart = dStart.getUTCDate() - iDayStart + (iDayStart === 0 ? -6 : 1);
+                dStart.setUTCDate(iDiffStart);
 
-                const iDayEnd = dEnd.getDay();
-                const iDiffEnd = dEnd.getDate() - iDayEnd + (iDayEnd === 0 ? 0 : 7);
-                dEnd = new Date(dEnd.setDate(iDiffEnd));
+                const iDayEnd = dEnd.getUTCDay();
+                const iDiffEnd = dEnd.getUTCDate() - iDayEnd + (iDayEnd === 0 ? 0 : 7);
+                dEnd.setUTCDate(iDiffEnd);
 
             } else if (sPer === "M") {
-                dStart = new Date(dStart.getFullYear(), dStart.getMonth(), 1);
-                dEnd = new Date(dEnd.getFullYear(), dEnd.getMonth() + 1, 0);
+                dStart = new Date(Date.UTC(dStart.getUTCFullYear(), dStart.getUTCMonth(), 1));
+                dEnd = new Date(Date.UTC(dEnd.getUTCFullYear(), dEnd.getUTCMonth() + 1, 0));
 
             } else if (sPer === "Q") {
-                const qStartMonth = Math.floor(dStart.getMonth() / 3) * 3;
-                dStart = new Date(dStart.getFullYear(), qStartMonth, 1);
-                const qEndMonth = Math.floor(dEnd.getMonth() / 3) * 3 + 2;
-                dEnd = new Date(dEnd.getFullYear(), qEndMonth + 1, 0);
+                const qStartMonth = Math.floor(dStart.getUTCMonth() / 3) * 3;
+                dStart = new Date(Date.UTC(dStart.getUTCFullYear(), qStartMonth, 1));
+                const qEndMonth = Math.floor(dEnd.getUTCMonth() / 3) * 3 + 2;
+                dEnd = new Date(Date.UTC(dEnd.getUTCFullYear(), qEndMonth + 1, 0));
             }
 
             return { startDate: dStart, endDate: dEnd, period: sPer };
@@ -333,7 +362,7 @@ sap.ui.define([
                     nodes: [
                         { Category: "", MRPElement: "Planned Independent Req.", BackendCategory: "1", BackendMRPElement: "IndReq", ...oEmptyWeeks, nodes: [] },
                         { Category: "", MRPElement: "Sales Order", BackendCategory: "1", BackendMRPElement: "SalesOrders", ...oEmptyWeeks, nodes: [] },
-                        { Category: "", MRPElement: "Dependent Requirement", BackendCategory: "1", BackendMRPElement: "DepReq", ...oEmptyWeeks, nodes: [] },
+                        { Category: "", MRPElement: "Component Requirements", BackendCategory: "1", BackendMRPElement: "DepReq", ...oEmptyWeeks, nodes: [] },
                         { Category: "", MRPElement: "Transfer Requirement Line", BackendCategory: "1", BackendMRPElement: "TransferRequirement", ...oEmptyWeeks, nodes: []}
                     ]
                 },
@@ -465,6 +494,23 @@ sap.ui.define([
                     }
                 }
             });
+
+            // ⭐ THE NEW FIX: Inventory Total = Inventory Base - Demand Total
+            const oDemandNode = aTree.find(n => n.Category === "DEMAND");
+            const oInvNode = aTree.find(n => n.Category === "INVENTORY");
+
+            if (oDemandNode && oInvNode) {
+                for (let i = 1; i <= 54; i++) {
+                    let nInvBase = 0;
+                    if (oInvNode.nodes && oInvNode.nodes.length > 0) {
+                        nInvBase = oInvNode.nodes.reduce((sum, leaf) => sum + (Number(leaf["W" + i]) || 0), 0);
+                    } else {
+                        nInvBase = Number(oInvNode["W" + i]) || 0;
+                    }
+                    let nDemTotal = Number(oDemandNode["W" + i]) || 0;
+                    oInvNode["W" + i] = Number((nInvBase - nDemTotal).toFixed(3));
+                }
+            }
         },
 
         // =========================================================
@@ -486,29 +532,23 @@ sap.ui.define([
             return new Filter({ filters: aFilters, and: false });
         },
 
-        // ⭐ THE MD04 FIX: Ensure Material is Single Select in the F4 Help
         onMaterialVH(oEvent) { this._openAdvancedValueHelp(oEvent.getSource(), "Material", "Select Material", false); },
         onPlantVH(oEvent) { this._openAdvancedValueHelp(oEvent.getSource(), "Plant", "Define Plant Ranges", true); },
         onVendorVH(oEvent) { this._openAdvancedValueHelp(oEvent.getSource(), "Vendor", "Define Vendor Ranges", true); },
 
-_openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
+        _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
             const oValueHelpDialog = new ValueHelpDialog({
                 title: sTitle, 
                 supportMultiselect: bIsMultiSelect, 
-                
-                // ⭐ THE FIX: Always force these to TRUE so the "Define Conditions" panel opens
-                // instead of trying to look for a non-existent table!
                 supportRanges: true, 
                 supportRangesOnly: true, 
-                
                 key: sField, descriptionKey: sField,
                 ok: function(oControlEvent) {
                     let aTokens = oControlEvent.getParameter("tokens");
                     
-                    // ⭐ THE MD04 FIX: User Feedback for F4 Help
                     if (!bIsMultiSelect && aTokens.length > 1) {
                         MessageBox.information("MD04 Planning Rule:\n\nYou can only evaluate one Material at a time. Only your first selection has been applied.");
-                        aTokens = [aTokens[0]]; // Keep only the first one
+                        aTokens = [aTokens[0]]; 
                     }
                     
                     oInput.setTokens(aTokens); 
@@ -526,6 +566,9 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
         },
 
         onSearch() {
+            // ⭐ THE FIX: Wipe out any invisible, unsaved changes so they don't break the user after a Refresh!
+            this._aChangeLog = []; 
+            
             const oODataModel = this.getOwnerComponent().getModel();
             const aMatTokens = this.byId("inpMaterial").getTokens();
             const aPlantTokens = this.byId("inpPlant").getTokens();
@@ -541,6 +584,12 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
             const dEndDate   = oAlignedDates.endDate;
             const sPer       = oAlignedDates.period;
 
+            // ⭐ THE NEW FIX: Restrict Date Range to Maximum 1 Year (54 weeks)
+            const iDaysDiff = (dEndDate.getTime() - dStartDate.getTime()) / (1000 * 3600 * 24);
+            if (iDaysDiff > 378) {
+                return MessageBox.error("The selected date range exceeds the maximum limit of 1 year (54 weeks). Please select a shorter horizon.");
+            }
+
             this.onGenerateColumns(this._generateTimeBuckets(dStartDate, dEndDate, sPer));
 
             const aFilters = [];
@@ -553,8 +602,9 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
             const oVendorFilter = this._buildTokenFilters("Vendor", aVendorTokens);
             if (oVendorFilter) aFilters.push(oVendorFilter);
 
-            const dStartFilter = new Date(Date.UTC(dStartDate.getFullYear(), dStartDate.getMonth(), dStartDate.getDate()));
-            const dEndFilter = new Date(Date.UTC(dEndDate.getFullYear(), dEndDate.getMonth(), dEndDate.getDate(), 23, 59, 59));
+            // TIMEZONE FIX
+            const dStartFilter = new Date(Date.UTC(dStartDate.getUTCFullYear(), dStartDate.getUTCMonth(), dStartDate.getUTCDate()));
+            const dEndFilter = new Date(Date.UTC(dEndDate.getUTCFullYear(), dEndDate.getUTCMonth(), dEndDate.getUTCDate(), 23, 59, 59));
 
             aFilters.push(new Filter("AvailDate", FilterOperator.BT, dStartFilter, dEndFilter));
             aFilters.push(new Filter("Period", FilterOperator.EQ, sPer));
@@ -567,6 +617,15 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
                     filters: aFilters,
                     urlParameters: { "$top": 1000, "$skip": iSkip }, 
                     success: (oData) => {
+                        // ⭐ TIMEZONE FIX: Normalizer
+                        if (oData && oData.results) {
+                            oData.results.forEach(r => {
+                                if (r.AvailDate) {
+                                    r.AvailDate = new Date(r.AvailDate.getUTCFullYear(), r.AvailDate.getUTCMonth(), r.AvailDate.getUTCDate());
+                                }
+                            });
+                        }
+
                         aAllResults.push(...oData.results);
                         
                         if (oData.results.length === 1000) {
@@ -611,19 +670,21 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
         _generateTimeBuckets(dStart, dEnd, sPeriod) {
             const aBuckets = [];
             let dCur = new Date(dStart.getTime());
-            const oFmtWk = DateFormat.getDateInstance({pattern: "MMM d, yyyy"});
-            const oFmtMon = DateFormat.getDateInstance({pattern: "MMMM yyyy"});
+            
+            // TIMEZONE FIX
+            const oFmtWk = DateFormat.getDateInstance({pattern: "MMM d, yyyy", UTC: true});
+            const oFmtMon = DateFormat.getDateInstance({pattern: "MMMM yyyy", UTC: true});
             let iIdx = 1;
 
             while (dCur <= dEnd && iIdx <= 54) {
                 let sLab = (sPeriod === "W") ? oFmtWk.format(dCur) : oFmtMon.format(dCur);
-                if (sPeriod === "Q") sLab = "Q" + (Math.floor(dCur.getMonth() / 3) + 1) + " " + dCur.getFullYear();
+                if (sPeriod === "Q") sLab = "Q" + (Math.floor(dCur.getUTCMonth() / 3) + 1) + " " + dCur.getUTCFullYear();
                 
                 let dBucketEnd = new Date(dCur.getTime());
                 
-                if (sPeriod === "W") { dBucketEnd.setDate(dBucketEnd.getDate() + 6); } 
-                else if (sPeriod === "M") { dBucketEnd.setMonth(dBucketEnd.getMonth() + 1); dBucketEnd.setDate(0); } 
-                else { dBucketEnd.setMonth(dBucketEnd.getMonth() + 3); dBucketEnd.setDate(0); }
+                if (sPeriod === "W") { dBucketEnd.setUTCDate(dBucketEnd.getUTCDate() + 6); } 
+                else if (sPeriod === "M") { dBucketEnd.setUTCMonth(dBucketEnd.getUTCMonth() + 1); dBucketEnd.setUTCDate(0); } 
+                else { dBucketEnd.setUTCMonth(dBucketEnd.getUTCMonth() + 3); dBucketEnd.setUTCDate(0); }
 
                 aBuckets.push({ 
                     key: "W" + iIdx, 
@@ -632,9 +693,9 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
                     endDate: dBucketEnd 
                 });
                 
-                if (sPeriod === "W") dCur.setDate(dCur.getDate() + 7);
-                else if (sPeriod === "M") dCur.setMonth(dCur.getMonth() + 1);
-                else dCur.setMonth(dCur.getMonth() + 3);
+                if (sPeriod === "W") dCur.setUTCDate(dCur.getUTCDate() + 7);
+                else if (sPeriod === "M") dCur.setUTCMonth(dCur.getUTCMonth() + 1);
+                else dCur.setUTCMonth(dCur.getUTCMonth() + 3);
                 iIdx++;
             }
             
@@ -648,8 +709,23 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
             
             for (let i = aCols.length - 1; i >= 4; i--) oTable.removeColumn(aCols[i]).destroy();
 
-            const oInputDecimalType = new TypeFloat({ minFractionDigits: 3, maxFractionDigits: 3, groupingEnabled: false, parseEmptyValueToZero: true });
-            const oDisplayDecimalType = new TypeFloat({ minFractionDigits: 3, maxFractionDigits: 3, groupingEnabled: true, parseEmptyValueToZero: true });
+            // ⭐ THE NEW FIX: Hardcoded European/SAP GUI Format
+            const oInputDecimalType = new TypeFloat({ 
+                minFractionDigits: 3, 
+                maxFractionDigits: 3, 
+                groupingEnabled: true, 
+                groupingSeparator: ".", 
+                decimalSeparator: ",", 
+                parseEmptyValueToZero: true 
+            });
+            const oDisplayDecimalType = new TypeFloat({ 
+                minFractionDigits: 3, 
+                maxFractionDigits: 3, 
+                groupingEnabled: true, 
+                groupingSeparator: ".", 
+                decimalSeparator: ",", 
+                parseEmptyValueToZero: true 
+            });
 
             aBuckets.forEach(oBuck => {
                 const oInp = new Input({
@@ -677,16 +753,45 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
                 }).addCustomData(new CustomData({ key: "weekProp", value: oBuck.key }))
                   .addCustomData(new CustomData({ key: "columnLabel", value: oBuck.label }));
 
+                // ⭐ FEATURE: Dynamic Row Highlight on Focus
+                oInp.attachBrowserEvent("focusin", function(e) {
+                    let $tr = jQuery(e.target).closest("tr");
+                    let sRowIndex = $tr.attr("data-sap-ui-rowindex");
+
+                    let styleTag = document.getElementById("dynamic-row-highlight");
+                    if (!styleTag) {
+                        styleTag = document.createElement("style");
+                        styleTag.id = "dynamic-row-highlight";
+                        document.head.appendChild(styleTag);
+                    }
+
+                    if (sRowIndex !== undefined) {
+                        styleTag.innerHTML = `
+                            tr[data-sap-ui-rowindex="${sRowIndex}"] > td,
+                            tr[data-sap-ui-rowindex="${sRowIndex}"] .sapUiTableCell {
+                                background-color: rgba(150, 150, 150, 0.15) !important;
+                            }
+                            tr[data-sap-ui-rowindex="${sRowIndex}"] > td {
+                                border-top: 1px solid rgba(150, 150, 150, 0.4) !important;
+                                border-bottom: 1px solid rgba(150, 150, 150, 0.4) !important;
+                            }
+                        `;
+                    }
+                });
+
+                oInp.attachBrowserEvent("focusout", function(e) {
+                    let styleTag = document.getElementById("dynamic-row-highlight");
+                    if (styleTag) styleTag.innerHTML = "";
+                });
+
                 // ⭐ BULLETPROOF HTML5 DRAG & DROP FIX ⭐
                 oInp.addEventDelegate({ 
                     ondblclick: (e) => this.onCellDoubleClick(e.srcControl),
                     onAfterRendering: () => {
                         const dom = oInp.getDomRef();
                         if (dom && oInp.getEditable()) {
-                            // Bind to the actual inner HTML input tag for stable dragging
                             const innerInput = dom.querySelector("input") || dom;
                             
-                            // Prevent ghost listeners when table re-renders on scroll
                             if (!innerInput.hasAttribute("data-dnd-bound")) {
                                 innerInput.setAttribute("draggable", "true");
                                 innerInput.setAttribute("data-dnd-bound", "true");
@@ -701,12 +806,12 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
                                     if (oInp.getEditable()) {
                                         e.preventDefault(); 
                                         e.dataTransfer.dropEffect = "move";
-                                        innerInput.style.backgroundColor = "#e5f0fa"; // Highlight drop target blue
+                                        innerInput.style.backgroundColor = "#e5f0fa"; 
                                     }
                                 });
                                 
                                 innerInput.addEventListener("dragleave", (e) => {
-                                    innerInput.style.backgroundColor = ""; // Remove blue highlight
+                                    innerInput.style.backgroundColor = ""; 
                                 });
                                 
                                 innerInput.addEventListener("drop", (e) => {
@@ -715,15 +820,10 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
                                     
                                     if (oInp.getEditable() && window._currentDragInput && window._currentDragInput !== oInp) {
                                         const sVal = e.dataTransfer.getData("text/plain");
-                                        
-                                        // 1. Move value to new cell
                                         oInp.setValue(sVal);
                                         oInp.fireChange({ value: sVal }); 
-                                        
-                                        // 2. Clear old cell
                                         window._currentDragInput.setValue("0");
                                         window._currentDragInput.fireChange({ value: "0" });
-                                        
                                         window._currentDragInput = null;
                                     }
                                 });
@@ -763,8 +863,8 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
             const sWeek = oInp.data("weekProp"); 
             let sPath = oInp.getBindingContext().getPath();
             const oRow = oMod.getProperty(sPath);
-            let nVal = Number(oInp.getValue()) || 0; 
-
+            
+            let nVal = Number(oMod.getProperty(sPath + "/" + sWeek)) || 0; 
             let nCellOldQty = Number(this._oBackupModel.getProperty(sPath + "/" + sWeek)) || 0;
 
             const aRawData = this.getView().getModel("localModel").getProperty("/RawData");
@@ -832,10 +932,17 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
                 }
             }
 
+            // ⭐ FEATURE: Change state to Information (Blue) on edit, and add an asterisk for visibility
             if (nVal !== nCellOldQty) {
                 oMod.setProperty(sPath + "/" + sWeek + "_state", "Information"); 
+                if (oRow.MRPElement && !oRow.MRPElement.endsWith(" *")) {
+                    oMod.setProperty(sPath + "/MRPElement", oRow.MRPElement + " *");
+                }
             } else {
                 oMod.setProperty(sPath + "/" + sWeek + "_state", "None"); 
+                if (oRow.MRPElement && oRow.MRPElement.endsWith(" *")) {
+                    oMod.setProperty(sPath + "/MRPElement", oRow.MRPElement.replace(" *", ""));
+                }
             }
 
             const fnPushToLog = (oContext) => {
@@ -854,7 +961,8 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
                 fnPushToLog({ 
                     Material: sMat, Plant: sPlnt, Category: oRow.BackendCategory || "1", MRPElement: sMrpElem, 
                     ProdVersion: sProdVer, PeriodBucket: sWeek, NewQuantity: nVal, OldQuantity: nCellOldQty, 
-                    PurchaseReq: "", LineItem: "", AvailDate: oStartDate, WkEndDate: oEndDate
+                    PurchaseReq: "", LineItem: "", AvailDate: oStartDate, WkEndDate: oEndDate,
+                    BindingPath: sPath 
                 });
             } else {
                 aMatches.forEach(oMatch => {
@@ -863,7 +971,8 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
                         Material: sMat, Plant: sPlnt, Category: oRow.BackendCategory, MRPElement: sMrpElem, 
                         ProdVersion: sProdVer, PeriodBucket: sWeek, NewQuantity: nVal, OldQuantity: nItemOldQty, 
                         PurchaseReq: oMatch.PurchaseReq || "", LineItem: oMatch.LineItem || "", 
-                        AvailDate: oStartDate, WkEndDate: oEndDate
+                        AvailDate: oStartDate, WkEndDate: oEndDate,
+                        BindingPath: sPath 
                     });
                 });
             }
@@ -876,12 +985,36 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
                     oMod.setProperty(sPath + "/" + sWeek, Number(total.toFixed(3)));
                 }
             }
+
+            // ⭐ THE NEW FIX: Dynamically update INVENTORY total (Inventory = Inventory - Demand)
+            const aTreeData = oMod.getProperty("/mrpData");
+            if (aTreeData) {
+                const iInvIndex = aTreeData.findIndex(n => n.Category === "INVENTORY");
+                const oDemNode = aTreeData.find(n => n.Category === "DEMAND");
+                
+                if (iInvIndex !== -1 && oDemNode) {
+                    const oInvNode = aTreeData[iInvIndex];
+                    let nBaseInv = 0;
+                    if (oInvNode.nodes && oInvNode.nodes.length > 0) {
+                        nBaseInv = oInvNode.nodes.reduce((sum, leaf) => sum + (Number(leaf[sWeek]) || 0), 0);
+                    } else {
+                        nBaseInv = Number(oInvNode[sWeek]) || 0;
+                    }
+                    let nDemTotal = Number(oDemNode[sWeek]) || 0;
+                    oMod.setProperty("/mrpData/" + iInvIndex + "/" + sWeek, Number((nBaseInv - nDemTotal).toFixed(3)));
+                }
+            }
         },
 
         onCellDoubleClick(oInp) {
             const oCtx = oInp.getBindingContext();
             const oRow = oCtx.getProperty();
             const sWeek = oInp.data("weekProp");
+
+            // ⭐ THE FIX: Do absolutely nothing when clicking an INVENTORY row
+            if (oRow.Category === "INVENTORY" || oRow.BackendCategory === "3") {
+                return; 
+            }
 
             if (oRow.nodes || !oRow.Material || oRow.Material === "") {
                 MessageBox.information("Please expand the group and double-click on a specific Material line to see details.");
@@ -974,14 +1107,24 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
             
             this._pDocPopover.then(function(oPopover) { 
                 const oTable = this.byId("idDocDetailsTable");
-                if (oTable) oTable.removeSelections(true); 
+                if (oTable) {
+                    oTable.removeSelections(true); 
+                    setTimeout(() => { oTable.selectAll(); }, 50);
+                    
+                    if (!oTable.data("deselectBlockedHook")) {
+                        oTable.attachSelectionChange(function(e) {
+                            if (!e.getParameter("selected")) {
+                                oTable.selectAll();
+                                sap.m.MessageToast.show("Partial selection is disabled. All documents must be processed together.");
+                            }
+                        });
+                        oTable.data("deselectBlockedHook", true);
+                    }
+                }
                 oPopover.openBy(oInput); 
             }.bind(this));
         },
 
-        // =========================================================
-        // 6. BACKEND ODATA COMMUNICATION (Saves & Conversions)
-        // =========================================================
         onConvertPrToPo: function () {
             const oTable = this.byId("idDocDetailsTable");
             const aSelectedContexts = oTable.getSelectedContexts();
@@ -994,9 +1137,10 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
             oOData.setUseBatch(true); 
             oOData.setDeferredGroups(["convertGrp"]);
 
+            // TIMEZONE FIX
             const fnToUTC = (d) => {
                 if (!d) return null;
-                return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+                return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
             };
 
             const oAlignedDates = this._getAdjustedDates();
@@ -1005,7 +1149,8 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
             const sPer         = oAlignedDates.period;
 
             aSelectedPRs.forEach(pr => {
-                let sFormattedDate = pr.AvailDate ? sap.ui.core.format.DateFormat.getDateInstance({pattern: "yyyyMMdd"}).format(pr.AvailDate) : "";
+                // TIMEZONE FIX
+                let sFormattedDate = pr.AvailDate ? sap.ui.core.format.DateFormat.getDateInstance({pattern: "yyyyMMdd", UTC: true}).format(pr.AvailDate) : "";
                 
                 const payload = { 
                     Material: pr.Material, Plant: pr.Plant, Category: pr.BackendCategory || "2", MRPElement: pr.BackendMRPElement, 
@@ -1061,44 +1206,15 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
                 this._aChangeLog = []; 
                 return MessageBox.information("No changes to save.");
             }
-            
-            let bIsGlobalDistribution = false;
-            let oEditedCells = new Set();
-
-            aActualChanges.forEach(c => {
-                let sKey = `${(c.Material||"").trim()}_${(c.Plant||"").trim()}_${(c.MRPElement||"").trim()}_${(c.ProdVersion||"").trim()}_${c.PeriodBucket}`;
-                oEditedCells.add(sKey);
-
-                if (Number(c.OldQuantity) > 0 || (c.PurchaseReq && c.PurchaseReq !== "")) {
-                    bIsGlobalDistribution = true;
-                }
-            });
-
-            let iTotalEditedCells = oEditedCells.size;
-
-            if (!bIsGlobalDistribution && iTotalEditedCells > 1) {
-                return MessageBox.error(
-                    `Global Validation Failed:\n\n` +
-                    `You are creating a new document, but modified ${iTotalEditedCells} cells globally. You are only allowed to modify 1 cell at a time on this screen.\n\n` +
-                    `First save the highlighted (blue) cell before trying to make more changes.`
-                );
-            }
-
-            if (bIsGlobalDistribution && iTotalEditedCells > 2) {
-                return MessageBox.error(
-                    `Global Validation Failed:\n\n` +
-                    `You are moving existing documents, but modified ${iTotalEditedCells} cells globally. You can only modify a maximum of 2 cells at a time on this screen.\n\n` +
-                    `First save the highlighted (blue) cells before making more changes.`
-                );
-            }
 
             const oOData = this.getOwnerComponent().getModel();
             oOData.setUseBatch(true); 
             oOData.setDeferredGroups(["grp"]);
 
+            // TIMEZONE FIX
             const fnToUTC = (d) => {
                 if (!d) return null;
-                return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+                return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
             };
 
             const oAlignedDates = this._getAdjustedDates();
@@ -1134,18 +1250,37 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
                     let aMsgs = this._extractBatchErrors(oData, aActualChanges);
                     let bHasError = aMsgs.some(m => m.type === "error" || m.type === "E" || m.type === "error");
                     
-                    this._showAllMessages(aMsgs, "Save Operation", () => {
-                        this._aChangeLog = []; 
-                        
-                        if (!bHasError) {
-                            const aEmptyTree = this._getEmptySkeleton();
-                            this.getView().getModel().setProperty("/mrpData", aEmptyTree);
-                            this._oBackupModel.setProperty("/mrpData", JSON.parse(JSON.stringify(aEmptyTree)));
-                            this.onSearch(); 
-                        } else {
-                            this.getView().getModel().refresh(); 
-                            this.onSearch(); 
+                    const oMod = this.getView().getModel();
+
+                    // ⭐ FEATURE: Red/Green state update on Save
+                    aActualChanges.forEach(c => {
+                        if (c.BindingPath) {
+                            oMod.setProperty(c.BindingPath + "/" + c.PeriodBucket + "_state", bHasError ? "Error" : "Success");
+                            
+                            if (!bHasError) {
+                                let sCurrentMRP = oMod.getProperty(c.BindingPath + "/MRPElement");
+                                if (sCurrentMRP && sCurrentMRP.endsWith(" *")) {
+                                    oMod.setProperty(c.BindingPath + "/MRPElement", sCurrentMRP.replace(" *", ""));
+                                }
+                            }
                         }
+                    });
+                    this.getView().getModel().refresh(true);
+
+                    this._showAllMessages(aMsgs, "Save Operation", () => {
+                        setTimeout(() => {
+                            this._aChangeLog = []; 
+                            
+                            if (!bHasError) {
+                                const aEmptyTree = this._getEmptySkeleton();
+                                this.getView().getModel().setProperty("/mrpData", aEmptyTree);
+                                this._oBackupModel.setProperty("/mrpData", JSON.parse(JSON.stringify(aEmptyTree)));
+                                this.onSearch(); 
+                            } else {
+                                this.getView().getModel().refresh(); 
+                                this.onSearch(); 
+                            }
+                        }, bHasError ? 0 : 800); 
                     });
                 },
                 error: (oError) => { 
@@ -1156,9 +1291,6 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
             });
         },
 
-        // =========================================================
-        // 7. BATCH ERROR PARSERS & UI FORMATTERS
-        // =========================================================
         _showAllMessages: function(aMsgs, sTitle, fnCallback) {
             if (!aMsgs || aMsgs.length === 0) {
                 MessageToast.show(sTitle + " completed successfully.");
@@ -1185,12 +1317,13 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
             }
         },
 
-        _extractBatchErrors: function(oData, aContextArray) {
+      _extractBatchErrors: function(oData, aContextArray) {
             let aMsgs = [];
             let iChangeIndex = 0; 
 
             if (oData && oData.__batchResponses) {
                 oData.__batchResponses.forEach(res => {
+                    // 1. Handle Top-Level Batch Errors
                     if (res.response && res.response.statusCode >= 400) {
                         try {
                             let oBody = JSON.parse(res.response.body);
@@ -1212,19 +1345,37 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
                         this._parseSapMessageHeader(res.headers["sap-message"], aMsgs, "");
                     }
 
+                    // 2. Handle Individual ChangeSet Responses
                     if (res.__changeResponses) {
                         res.__changeResponses.forEach(changeRes => {
                             let oContext = (aContextArray && aContextArray[iChangeIndex]) ? aContextArray[iChangeIndex] : {};
                             let sPrefix = "";
                             
-                            if (oContext.DocNumber) sPrefix = `[PR ${oContext.DocNumber}]: `;
-                            else if (oContext.PurchaseReq) sPrefix = `[PR ${oContext.PurchaseReq}]: `;
-                            else if (oContext.Material) sPrefix = `[Mat ${oContext.Material} - ${oContext.PeriodBucket || oContext.Plant}]: `;
+                            // ⭐ THE FIX: Dynamic Prefix based on Document Type
+                            let sDocTypeLabel = "Doc";
+                            let sMrpElem = oContext.MRPElement || oContext.BackendMRPElement || "";
+                            
+                            if (sMrpElem.includes("PurRqs")) sDocTypeLabel = "PR";
+                            else if (sMrpElem.includes("PurOrd")) sDocTypeLabel = "PO";
+                            else if (sMrpElem.includes("SalesOrders")) sDocTypeLabel = "SO";
+                            else if (sMrpElem.includes("IndReq")) sDocTypeLabel = "PIR";
+                            else if (sMrpElem.includes("STOs")) sDocTypeLabel = "STO";
+                            else if (sMrpElem.includes("TransferRequirement")) sDocTypeLabel = "TR";
+                            
+                            let sActualDocNum = oContext.DocNumber || oContext.PurchaseReq || "";
 
+                            if (sActualDocNum) {
+                                sPrefix = `[${sDocTypeLabel} ${sActualDocNum}]: `;
+                            } else if (oContext.Material) {
+                                sPrefix = `[Mat ${oContext.Material} - ${oContext.PeriodBucket || oContext.Plant}]: `;
+                            }
+
+                            // Parse SAP-Message Header
                             if (changeRes.headers && changeRes.headers["sap-message"]) {
                                 this._parseSapMessageHeader(changeRes.headers["sap-message"], aMsgs, sPrefix);
                             }
                             
+                            // Parse OData Error Body
                             if (changeRes.response && changeRes.response.body) {
                                 try {
                                     let oBody = JSON.parse(changeRes.response.body);
@@ -1241,6 +1392,7 @@ _openAdvancedValueHelp(oInput, sField, sTitle, bIsMultiSelect) {
                 });
             }
             return aMsgs;
+        
         },
 
         _parseSapMessageHeader: function(sSapMessage, aMsgs, sPrefix) {

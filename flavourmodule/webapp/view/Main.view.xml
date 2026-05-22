@@ -18,25 +18,26 @@
         <f:title>
             <f:DynamicPageTitle>
                 <f:heading>
-                  <HBox alignItems="Center">
-    <VariantManagement 
-        id="idVariantManagement" 
-        save=".onSaveVariant" 
-        select=".onSelectVariant"
-        manage=".onManageVariant"
-        items="{localModel>/SavedVariants}">
-        <items>
-            <VariantItem 
-                key="{localModel>key}" 
-                title="{localModel>name}" 
-                author="Local User" 
-                changeable="true" 
-                remove="true" />
-        </items>
-    </VariantManagement>
-    
-    <Title text="Flavor Planning" level="H1" class="sapUiSmallMarginBegin"/>
-</HBox>
+                    <HBox alignItems="Center">
+                        <VariantManagement 
+                            id="idVariantManagement" 
+                            save=".onSaveVariant" 
+                            select=".onSelectVariant"
+                            manage=".onManageVariant"
+                            items="{localModel>/SavedVariants}">
+                            <items>
+                                <!-- ⭐ THE FIX: author is now bound to the dynamic model -->
+                                <VariantItem 
+                                    key="{localModel>key}" 
+                                    title="{localModel>name}" 
+                                    author="{localModel>author}" 
+                                    changeable="true" 
+                                    remove="true" />
+                            </items>
+                        </VariantManagement>
+                        
+                        <Title text="Flavor Planning" level="H1" class="sapUiSmallMarginBegin"/>
+                    </HBox>
                 </f:heading>
                 <f:actions>
                     <Button 
@@ -103,7 +104,7 @@
                 alternateRowColors="true" 
                 fixedColumnCount="4"> 
                 
-<table:extension>
+                <table:extension>
                     <OverflowToolbar style="Clear">
                         <ToolbarSpacer/>
                         
@@ -132,8 +133,6 @@
                         </table:template>
                     </table:Column>
 
-
-                    
                     <table:Column width="278px">
                         <Label text="Prod Version" design="Bold"/>
                         <table:template><Text text="{ProdVersion}" wrapping="false"/></table:template>
